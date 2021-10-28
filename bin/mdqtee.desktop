@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Encoding=UTF-8
+Name=mdqtee
+Type=Application
+Terminal=false
+Exec=mdqtee
+Icon=mdqtee
+Categories=Office;
