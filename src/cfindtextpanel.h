@@ -23,6 +23,7 @@ public:
     void setCloseIcon(const QIcon &icon);
     void setFlat(bool flat);
     void setText(const QString &text);
+    //void setFocus();
 
 signals:
 
@@ -45,6 +46,8 @@ private:
     QLabel* lbStatus;
     bool isEndOfText;
     int findStatus;
+    //void keyPressEvent(QKeyEvent *event);
+    //bool eventFilter(QObject *target, QEvent *event);
 };
 
 #endif // CFINDTEXTPANEL_H

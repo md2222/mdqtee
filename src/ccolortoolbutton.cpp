@@ -99,6 +99,7 @@ void CColorToolButton::onColorMenuAct()
 
 QColor CColorToolButton::getCustomColor()
 {
+    //QColor col = QColorDialog::getColor(textEdit->textColor(), this);
     QColorDialog cd(this);
     cd.setOptions(QColorDialog::DontUseNativeDialog);
     cd.setCurrentColor(currentColor);

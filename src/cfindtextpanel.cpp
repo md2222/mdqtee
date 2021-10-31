@@ -10,9 +10,12 @@ CFindTextPanel::CFindTextPanel(QWidget *parent) : QWidget(parent)
     hb->setContentsMargins(10, 0, 10, 8);
 
     edFind = new QLineEdit(this);
+    //edFind = new CFindEdit(this);
     edFind->setPlaceholderText("Find");
     edFind->setFixedWidth(250);
+    //edFind->setAlignment(Qt::AlignLeft);
 
+    //edFind->installEventFilter(this);
     connect(edFind, SIGNAL(returnPressed()), this, SLOT(onReturnPressed()));
 
     btPrev = new QToolButton(this);
@@ -27,11 +30,12 @@ CFindTextPanel::CFindTextPanel(QWidget *parent) : QWidget(parent)
     btClose->setFixedWidth(30);
     btClose->setIconSize(QSize(22, 22));
 
-    connect(btPrev, SIGNAL(released()), this, SLOT(findPrev()));
-    connect(btNext, SIGNAL(released()), this, SLOT(findNext()));
-    connect(btClose, &QPushButton::released, this, &CFindTextPanel::onClose);
+    connect(btPrev, &QToolButton::clicked, this, &CFindTextPanel::findPrev);
+    connect(btNext, &QToolButton::clicked, this, &CFindTextPanel::findNext);
+    connect(btClose, &QToolButton::clicked, this, &CFindTextPanel::onClose);
 
     chWholeWords = new QCheckBox("Whole words    ", this);
+    //chWholeWords->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
     chWholeWords->setFixedWidth(120);
     chWholeWords->setChecked(false);
     connect(chWholeWords, SIGNAL(stateChanged(int)), this, SLOT(onWholeWords(int)));
@@ -39,6 +43,7 @@ CFindTextPanel::CFindTextPanel(QWidget *parent) : QWidget(parent)
     lbStatus = new QLabel(this);
     lbStatus->setFixedWidth(100);
     lbStatus->setAlignment(Qt::AlignCenter);
+    //lbStatus->setStyleSheet("QLabel { background-color: #446fbd; color: #f0f0f0; }");
     lbStatus->setStyleSheet("QLabel { background-color: #404244; color: #fafafa; }");  // #3c63a7  #308cc6
     lbStatus->setText("End of text");
     lbStatus->setVisible(false);
@@ -50,6 +55,10 @@ CFindTextPanel::CFindTextPanel(QWidget *parent) : QWidget(parent)
     hb->addWidget(lbStatus);
     hb->addStretch(1);
     hb->addWidget(btClose, Qt::AlignRight);
+
+    //setTabOrder(edFind, btPrev);
+    //setTabOrder(btPrev, btNext);
+    //setTabOrder(btNext, chWholeWords);
 
     setFocusPolicy(Qt::TabFocus);
     setFocusProxy(edFind);
@@ -88,6 +97,9 @@ void CFindTextPanel::setCloseIcon(const QIcon &icon)
 
 void CFindTextPanel::setFlat(bool flat)
 {
+    //btPrev->setFlat(flat);
+    //btNext->setFlat(flat);  btNext->seta
+    //btClose->setFlat(flat);
     btPrev->setAutoRaise(flat);
     btNext->setAutoRaise(flat);
     btClose->setAutoRaise(flat);
@@ -119,15 +131,19 @@ void CFindTextPanel::findNext()
         if (findStatus == 2)
         {
             teText->moveCursor(QTextCursor::Start);
+            //isEndOfText = false;
             findStatus = 0;
         }
 
         if (!teText->find(edFind->text(), findFlags))
         {
+            //lbStatus->setText("End of text");
             lbStatus->setVisible(true);
+            //isEndOfText = true;
             findStatus = 2;
         }
         else
+            //lbStatus->setText("");
             lbStatus->setVisible(false);
     }
 }
@@ -142,15 +158,19 @@ void CFindTextPanel::findPrev()
         if (findStatus == 1)
         {
             teText->moveCursor(QTextCursor::End);
+            //isEndOfText = false;
             findStatus = 0;
         }
 
         if (!teText->find(edFind->text(), findFlags))
         {
+            //lbStatus->setText("End of text");
             lbStatus->setVisible(true);
+            //isEndOfText = true;
             findStatus = 1;
         }
         else
+            //lbStatus->setText("");
             lbStatus->setVisible(false);
     }
 }
