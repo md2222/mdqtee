@@ -15,6 +15,6 @@ Feautures:
 - File browser panel. 
 - Data file path as command line argument. It allows you to open a data file from file manager and make mdqtee as default (for maff files, for example).
 
-Known issues: on some images the special context menu items only opens on the right half. It overlaped by the previous fragment.
+Known issues: on some images the special context menu items opens on the right half only. It overlaped by the previous fragment.
 
 ![mdqtee](https://raw.githubusercontent.com/md2222/mdqtee/master/mdqtee-screenshot-01.png)
