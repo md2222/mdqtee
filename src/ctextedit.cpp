@@ -22,12 +22,62 @@ extern QString iconDir;
 QMutex mtxLoad;
 
 
+
+ScrollBar::ScrollBar(QWidget *parent)
+{
+    setParent(parent);
+}
+
+
+void ScrollBar::mousePressEvent(QMouseEvent *ev)
+{
+    qDebug() << "ScrollBar::mousePressEvent:    " << ev->pos().y() << sliderPosition() << height() << maximum();
+
+    if (ev->modifiers() & Qt::ControlModifier)
+    {
+        qreal unit  = maximum() / height();
+        int mousePos = ev->pos().y() * unit;
+        qDebug() << "ScrollBar::mousePressEvent:   unit  mousePos   " << unit << mousePos;
+
+        if (mousePos > sliderPosition())
+            triggerAction(SliderToMaximum);
+        else
+            triggerAction(SliderToMinimum);
+
+        ev->setAccepted(true);
+    }
+    else
+        QScrollBar::mousePressEvent(ev);
+}
+
+
+void ScrollBar::wheelEvent(QWheelEvent *ev)
+{
+    qDebug() << "ScrollBar::wheelEvent:    "  << ev->angleDelta();
+
+    if (ev->modifiers() & Qt::ControlModifier)
+    {
+        if (ev->angleDelta().y() > 0)
+            triggerAction(SliderPageStepSub);
+        else
+            triggerAction(SliderPageStepAdd);
+
+        ev->setAccepted(true);
+    }
+    else
+        QScrollBar::wheelEvent(ev);
+}
+//------------------------------------------------------------------------------------------------------
+
+
 CTextEdit::CTextEdit(QWidget *parent)
 {
+    Q_UNUSED(parent)
+
     isHandCursor = false;
     isNetworkEnabled = true;
     viewport()->setMouseTracking(true);
-    setFontPointSize(10);
+    setFontPointSize(InitFontPointSize);
 
     menuIcons["&Undo"] = iconDir + "editundo.png";
     menuIcons["&Redo"] = iconDir + "editredo.png";
@@ -36,11 +86,18 @@ CTextEdit::CTextEdit(QWidget *parent)
     menuIcons["&Paste"] = iconDir + "editpaste.png";
     menuIcons["Delete"] = iconDir + "editdelete.png";
     menuIcons["Select All"] = iconDir + "editselectall.png";
+
+    ScrollBar* newScrollBar = new ScrollBar(this);
+
+    setVerticalScrollBar(newScrollBar);
 }
 
 
 void CTextEdit::keyPressEvent(QKeyEvent *ev)
 {
+    bool isCtrl = ev->modifiers() & Qt::ControlModifier;
+    bool isShift = ev->modifiers() & Qt::ShiftModifier;
+
     if (ev->key() == Qt::Key_Control)
     {
         QString href = anchorAt(mapFromGlobal(QCursor::pos()));
@@ -49,13 +106,23 @@ void CTextEdit::keyPressEvent(QKeyEvent *ev)
         setHandCursor(href);
     }
 
-    if(ev->modifiers() & Qt::ShiftModifier || ev->modifiers() & Qt::ControlModifier)
+    if(isCtrl || isShift)
     {
-        qDebug() << "keyPressEvent: Modifier + " << ev->key();
+        qDebug() << "CTextEdit::keyPressEvent:    Modifier + " << ev->key() << document()->isUndoAvailable() << document()->isRedoAvailable();
 
-        if (ev->modifiers() & Qt::ControlModifier && ev->key() == Qt::Key_Y)
+        if (isCtrl && ev->key() == Qt::Key_Y)
+        {
+            qDebug() << "CTextEdit::keyPressEvent:    redo  " << document()->availableRedoSteps();
             redo();
-        else if (ev->modifiers() & Qt::ControlModifier && ev->key() == Qt::Key_Down)
+            return;
+        }
+        else if (isCtrl && ev->key() == Qt::Key_Z)  // not need. low level func work always
+        {
+            qDebug() << "CTextEdit::keyPressEvent:    undo  " << document()->availableUndoSteps();
+            undo();
+            return;
+        }
+        else if (isCtrl && ev->key() == Qt::Key_Down)
         {
             moveCursor(QTextCursor::EndOfBlock);
 
@@ -69,7 +136,7 @@ void CTextEdit::keyPressEvent(QKeyEvent *ev)
         else if (ev->key() == Qt::Key_Space || ev->key() == Qt::Key_Return)
         {
             QTextCursor cur = textCursor();
-            qDebug() << "keyPressEvent: Key_Space  " << cur.position() << cur.positionInBlock()
+            qDebug() << "CTextEdit::keyPressEvent:    Key_Space  " << cur.position() << cur.positionInBlock()
                      << cur.selectionStart() << cur.selectionEnd();
 
             if (cur.charFormat().isAnchor())
@@ -84,7 +151,7 @@ void CTextEdit::keyPressEvent(QKeyEvent *ev)
             QFont font = cur.charFormat().font();
             QTextCharFormat fmt;
 
-            if (ev->modifiers() & Qt::ShiftModifier)
+            if (isShift)
             {
                 fmt.setFontFamily(font.family());
                 fmt.setFontPointSize(font.pointSizeF());
@@ -93,7 +160,7 @@ void CTextEdit::keyPressEvent(QKeyEvent *ev)
             cur.setCharFormat(fmt);
             cur.insertText(" ", fmt);
 
-            if (ev->modifiers() & Qt::ControlModifier)
+            if (isCtrl)
             {
                 ev->setModifiers(Qt::NoModifier);
             }
@@ -127,7 +194,6 @@ void CTextEdit::mouseMoveEvent(QMouseEvent *ev)
         if (ev->modifiers() & Qt::ControlModifier)
         {
             QString href = anchorAt(ev->pos());
-
             setHandCursor(href);
         }
         else
@@ -199,7 +265,9 @@ void CTextEdit::contextMenuEvent(QContextMenuEvent *ev)
         {
             it.next();
             if (act->text().indexOf(it.key()) >= 0)
+            {
                 act->setIcon(QIcon(it.value()));
+            }
         }
     }
 
@@ -212,8 +280,10 @@ void CTextEdit::contextMenuEvent(QContextMenuEvent *ev)
     QString imgPath;
     bool isImageFormat = false;
     bool isAnchor = false;
-    bool hasSelection = textCursor().hasSelection();
+    bool isLocalAnchor = false;
+
     QTextCharFormat charFmt;
+
     QTextFragment frag = getCurrFrag(cur);
     if (frag.isValid())
         charFmt = frag.charFormat();
@@ -223,8 +293,13 @@ void CTextEdit::contextMenuEvent(QContextMenuEvent *ev)
     if (charFmt.isAnchor())
     {
         anchorHref = charFmt.anchorHref();
-        if (!anchorHref.isEmpty() && anchorHref.left(1) != "#")
+
+        if (!anchorHref.isEmpty())
+        {
             isAnchor = true;
+            if (anchorHref.left(1) == "#")
+                isLocalAnchor = true;
+        }
         qDebug() << "contextMenuEvent:  isAnchor: " << anchorHref;
     }
 
@@ -236,73 +311,57 @@ void CTextEdit::contextMenuEvent(QContextMenuEvent *ev)
         qDebug() << "contextMenuEvent:  isImageFormat: " << imgPath;
     }
 
+    QClipboard *clip = QApplication::clipboard();
+    const QMimeData *clipMime = clip->mimeData();
+
     QAction* a = 0;
-
-    /* Property for onReplaceWithLink:
-    LS - Link save
-    LI - Replace with image-link from clipboard
-    LC - copy link to clipboard
-    LR - Replace link with image
-
-    IS - Image save
-    IC - Copy image to clipboard
-    IL - Replace with link - for images
-    IT - Replace with thumbnail
-    IF - Fit image to line wrap width
-    IO - Open with external program
-    */
 
     if (isAnchor)
     {
-        if (!isHttpLink(anchorHref))
-        {
-            const QIcon saveAsIcon = QIcon(iconDir + "filesaveas.png");
-            a = menu->addAction(saveAsIcon, "Save link as ...", this, &CTextEdit::onMenuAct);
-            a->setData(ev->pos());
-            a->setProperty("type", "LS");
-        }
+        const QIcon saveAsIcon = QIcon(iconDir + "filesaveas.png");
+        a = menu->addAction(saveAsIcon, "Save link as ...", this, &CTextEdit::onMenuAct);
+        a->setData(ev->pos());
+        a->setProperty("type", "SaveLink");
+        a->setEnabled(!isHttpLink(anchorHref) && !isLocalAnchor);
 
         QString fileMime = QMimeDatabase().mimeTypeForFile(anchorHref).name();
-        if (fileMime.indexOf("image") >= 0)
-        {
-            const QIcon replImageIcon = QIcon(iconDir + "image.png");
-            a = menu->addAction(replImageIcon, "Replace link with image", this, &CTextEdit::onMenuAct);
-            a->setData(ev->pos());
-            a->setProperty("type", "LR");
-            a->setProperty("path", anchorHref);
-        }
 
-        if (mime != "md")
+        const QIcon replImageIcon = QIcon(iconDir + "image.png");
+        a = menu->addAction(replImageIcon, "Replace link with image", this, &CTextEdit::onMenuAct);
+        a->setData(ev->pos());
+        a->setProperty("type", "ReplaceLinkWithImage");
+        a->setProperty("path", anchorHref);
+        a->setEnabled(fileMime.indexOf("image") >= 0);
+
+        // if not Markdown
+        //if (mime != "md" && clipMime && clipMime->hasImage())
+        if (mime != "md" && clipMime)
         {
             const QIcon insImageIcon = QIcon(iconDir + "insert-image.png");
             a = menu->addAction(insImageIcon, "Make image from clipboard as link", this, &CTextEdit::onMenuAct);
             a->setData(ev->pos());
-            a->setProperty("type", "LI");
+            a->setProperty("type", "MakeImageAsLink");
+            a->setEnabled(clipMime->hasImage());
         }
 
-        if (isHttpLink(anchorHref))
-        {
-            const QIcon copyLinkIcon = QIcon(iconDir + "editcopy.png");
-            a = menu->addAction(copyLinkIcon, "Copy link to clipboard", this, &CTextEdit::onMenuAct);
-            a->setData(ev->pos());
-            a->setProperty("type", "LC");
-        }
+        const QIcon copyLinkIcon = QIcon(iconDir + "editcopy.png");
+        a = menu->addAction(copyLinkIcon, "Copy link to clipboard", this, &CTextEdit::onMenuAct);
+        a->setData(ev->pos());
+        a->setProperty("type", "CopyLink");
     }
 
     if (isImageFormat)
     {
-        if (!isHttpLink(imgPath))
-        {
-            const QIcon saveAsIcon = QIcon(iconDir + "filesaveas.png");
-            a = menu->addAction(saveAsIcon, "Save image as ...", this, &CTextEdit::onMenuAct);
-            a->setData(ev->pos());
-            a->setProperty("type", "IS");
-        }
+        const QIcon saveAsIcon = QIcon(iconDir + "filesaveas.png");
+        a = menu->addAction(saveAsIcon, "Save image as ...", this, &CTextEdit::onMenuAct);
+        a->setData(ev->pos());
+        a->setProperty("type", "SaveImage");
+        a->setEnabled(!isHttpLink(imgPath));
 
         const QIcon copyImageIcon = QIcon(iconDir + "editcopy.png");
         a = menu->addAction(copyImageIcon, "Copy image to clipboard", this, &CTextEdit::onMenuAct);
         a->setData(ev->pos());
-        a->setProperty("type", "IC");
+        a->setProperty("type", "CopyImage");
 
         if (mime != "md")
         {
@@ -310,25 +369,24 @@ void CTextEdit::contextMenuEvent(QContextMenuEvent *ev)
             a = menu->addAction(fitImageIcon, "Fit image to line wrap width", this, &CTextEdit::onMenuAct);
             a->setToolTip("To window width if no line wrap\nCtrl+   - For all images");
             a->setData(ev->pos());
-            a->setProperty("type", "IF");
+            a->setProperty("type", "FitImage");
 
-            if (!isAnchor)
-            {
-                const QIcon insLinkIcon = QIcon(iconDir + "insert-link.png");
-                a = menu->addAction(insLinkIcon, "Replace image with link", this, &CTextEdit::onMenuAct);
-                a->setData(ev->pos());
-                a->setProperty("type", "IL");
+            const QIcon insLinkIcon = QIcon(iconDir + "insert-link.png");
+            a = menu->addAction(insLinkIcon, "Replace image with link", this, &CTextEdit::onMenuAct);
+            a->setData(ev->pos());
+            a->setProperty("type", "ReplaceImageWithLink");
+            a->setEnabled(!isAnchor);
 
-                const QIcon insImageIcon = QIcon(iconDir + "insert-image.png");
-                a = menu->addAction(insImageIcon, "Replace image with thumbnail", this, &CTextEdit::onMenuAct);
-                a->setData(ev->pos());
-                a->setProperty("type", "IT");
-            }
+            const QIcon insImageIcon = QIcon(iconDir + "insert-image.png");
+            a = menu->addAction(insImageIcon, "Replace image with thumbnail", this, &CTextEdit::onMenuAct);
+            a->setData(ev->pos());
+            a->setProperty("type", "ReplaceImageWithThumb");
+            a->setEnabled(!isAnchor);
         }
 
         a = menu->addAction("Open image with external program", this, &CTextEdit::onMenuAct);
         a->setData(ev->pos());
-        a->setProperty("type", "IO");
+        a->setProperty("type", "OpenImage");
         a->setProperty("path", imgPath);
     }
 
@@ -336,62 +394,71 @@ void CTextEdit::contextMenuEvent(QContextMenuEvent *ev)
         menu->addSeparator();
 
     QString imageLink;
-    const QClipboard *clip = QApplication::clipboard();
-    const QMimeData *clipMime = clip->mimeData();
-    if (clipMime)
+    bool clipHasAnchor = false;
+
+    if (clipMime && clipMime->hasText())
     {
-        if (clipMime->hasText())
+        QString text = clip->text();
+
+        if (isHttpLink(text))
         {
-            QString text = clip->text();
-            if (isHttpLink(text))
-            {
-                QString fileMime = QMimeDatabase().mimeTypeForFile(text).name();
-                if (fileMime.indexOf("image") >= 0)
-                    imageLink = text;
-            }
+            QString fileMime = QMimeDatabase().mimeTypeForFile(text).name();
+            if (fileMime.indexOf("image") >= 0)
+                imageLink = text;
         }
+
+        if (text.length() <= maxAnchorLength && text.left(1) == "#")
+            clipHasAnchor = true;
     }
 
-    /* Property for onInsertConst:
-    CH - Copy HTML
-    PP - Paste as plain text
-    PI - Paste as image
-    L - Insert line
-    D - Insert current date
-    */
+    bool hasSelection = textCursor().hasSelection();
+    int selectionLength = textCursor().selectionEnd() - textCursor().selectionStart();
 
     const QIcon copyIcon = QIcon(iconDir + "editcopy.png");
     a = menu->addAction(copyIcon, "Copy HTML", this, &CTextEdit::onMenuAct2);
-    a->setData("CH");
+    a->setData("CopyHtml");
     a->setEnabled(hasSelection);
 
     const QIcon pasteIcon = QIcon(iconDir + "editpaste.png");
     a = menu->addAction(pasteIcon, "Paste as plain text", this, &CTextEdit::onMenuAct2);
-    a->setData("PP");
+    a->setData("PasteAsPlainText");
 
-    if (!imageLink.isEmpty())
-    {
-        const QIcon pasteIcon = QIcon(iconDir + "editpaste.png");
-        a = menu->addAction(pasteIcon, "Paste as image", this, &CTextEdit::onMenuAct2);
-        a->setData("PI");
-        a->setProperty("http", imageLink);
-        a->setToolTip("Download image and paste");
-    }
+    const QIcon pasteIcon = QIcon(iconDir + "editpaste.png");
+    a = menu->addAction(pasteIcon, "Paste as image", this, &CTextEdit::onMenuAct2);
+    a->setData("PasteAsImage");
+    a->setProperty("http", imageLink);
+    a->setToolTip("Download image and paste");
+    a->setEnabled(!imageLink.isEmpty());
 
     if (mime != "md")
     {
         a = menu->addAction("Line", this, &CTextEdit::onMenuAct2);
-        a->setData("L");
+        a->setData("InsertLine");
         a->setToolTip("Insert line");
     }
 
     a = menu->addAction("Current date", this, &CTextEdit::onMenuAct2);
-    a->setData("D");
+    a->setData("InsertCurrentDate");
     a->setToolTip("Insert current date");
 
     a = menu->addAction("Merge blocks", this, &CTextEdit::onMenuAct2);
-    a->setData("MB");
+    a->setData("MergeBlocks");
     a->setEnabled(hasSelection);
+
+    a = menu->addAction("Create anchor link", this, &CTextEdit::onMenuAct2);
+    a->setData("CreateAnchorLink");
+    a->setToolTip("Then copy the link and insert anchor");
+    a->setEnabled((selectionLength >= 3 && selectionLength <= maxAnchorLength));
+
+    a = menu->addAction("Insert anchor", this, &CTextEdit::onMenuAct2);
+    a->setData("InsertAnchor");
+    a->setToolTip("Copy the link first");
+    a->setEnabled(clipHasAnchor);
+
+    a = menu->addAction("Delete anchor", this, &CTextEdit::onMenuAct2);
+    a->setData("DeleteAnchor");
+    a->setProperty("AnchorName", anchorHref.mid(1));
+    a->setEnabled(isLocalAnchor);
 
     menu->exec(ev->globalPos());
     delete menu;
@@ -425,25 +492,32 @@ void CTextEdit::insertFromMimeData(const QMimeData* source)
         WaitCursor wc;
 
         QImage image = qvariant_cast<QImage>(source->imageData());
-        qDebug() << "insertFromMimeData:  image size:  " << image.width() << image.height();
+        qDebug() << "insertFromMimeData:  image size:  " << image << image.isNull() << image.width() << image.height();
 
-        QString fileName = QString("image-%1.png").arg(time(NULL));
-        qDebug() << "insertFromMimeData:  fileName:  " << fileName;
+        if (image.isNull())
+        {
+            qDebug() << "insertFromMimeData:  Paste image error ";
+            emitMessage(Warning, "Paste image error. Maybe format is not supported.\n");
+            return;
+        }
 
-        if (!image.save(pathToPath(fileName, fullPathType), 0, -1))
+        QString fileName = QString("image-%1.jpg").arg(time(NULL));
+        qDebug() << "insertFromMimeData:  fileName,  imageQuality  =  " << fileName << imageQuality;
+
+        if ( !image.save(pathToPath(fileName, FullPathType), "JPG", imageQuality) )
         {
             qDebug() << "insertFromMimeData:  save image error ";
-            emit error("Save image error.\n" + pathToPath(fileName, fullPathType));  // QueuedConnection
+            emitMessage(Warning, "Save image error.\n" + pathToPath(fileName, FullPathType));
             return;
         }
 
         imageSizes[fileName] = image.size();
 
         QTextImageFormat tif;
-        tif.setName(pathToPath(fileName, docPathType));
+        tif.setName(pathToPath(fileName, DocPathType));
         int w = image.width();
         int ww = lineWrapColumnOrWidth();
-        if (!ww)  ww = width() - 30;
+        if (!ww)  ww = width() - LineWrapMargin;
         if (w > ww)  w = ww;
         tif.setWidth(w);
 
@@ -463,7 +537,8 @@ void CTextEdit::insertFromMimeData(const QMimeData* source)
                 // when drop image
                 if (fileMime.indexOf("image") >= 0)
                 {
-                    QString fileName = downloadFile(urlStr, "H");
+                    QString fileName = downloadFile(urlStr, Inet);
+
                     if (!fileName.isEmpty())
                     {
                         insertHtml("<img src=\"" + fileName.replace(" ", "%20") + "\">");
@@ -480,11 +555,11 @@ void CTextEdit::insertFromMimeData(const QMimeData* source)
     }
     else if (source->hasHtml())
     {
-         qDebug() << "source->hasHtml: " << source->text();
          QString html;
          QString text = source->text();
          if (source->hasText() && Qt::mightBeRichText(text))  html = text;
          else  html = source->html();
+         qDebug() << "CTextEdit::insertFromMimeData:    source->hasHtml: " << html;
 
          html.replace("<textarea", "<pre");
          html.replace("textarea>", "pre>");
@@ -550,7 +625,7 @@ void CTextEdit::insertFromMimeData(const QMimeData* source)
 
 void CTextEdit::insertFile(QString urlStr)
 {
-    QString fileName = downloadFile(urlStr, "F");
+    QString fileName = downloadFile(urlStr, Local);
     if (fileName.isEmpty())  return;
 
     QTextCursor cur = textCursor();
@@ -576,10 +651,10 @@ void CTextEdit::setCurrFragFont(QTextCursor &cur, QFont &font)
 }
 
 
-QString CTextEdit::downloadFile(QString urlStr, QString flags)
+QString CTextEdit::downloadFile(QString urlStr, int flags)
 {
     QTextImageFormat fmt;
-    fmt.setProperty(1, flags);  // I - image, T - thumbnail, C - from clipboard, F - local file, H - internet
+    fmt.setProperty(FlagsProp, flags);
     fmt.setName(urlStr);
     emit addResFile(fmt);
 
@@ -593,12 +668,12 @@ bool CTextEdit::isHttpLink(QString link)
 }
 
 
-QString CTextEdit::pathToPath(QString path, CTextEdit::pathTypes type)
+QString CTextEdit::pathToPath(QString path, CTextEdit::PathType type)
 {
     QString s;
-    if (type == fullPathType)
+    if (type == FullPathType)
         s = filesDir + "/" + QFileInfo(path).fileName();
-    else if (type == docPathType)
+    else if (type == DocPathType)
         s = QFileInfo(filesDir).fileName() + "/" + QFileInfo(path).fileName();
 
     return s;
@@ -625,9 +700,8 @@ void CTextEdit::fitImage(QTextImageFormat& fmt)
         qreal ratio = 0;
         if (h > 0)  ratio = w/h;
 
-        //w = width() - 30;
         int ww = lineWrapColumnOrWidth();
-        if (!ww)  ww = width() - 30;
+        if (!ww)  ww = width() - LineWrapMargin;
         //if (w > ww)
         {
             w = ww;
@@ -656,36 +730,27 @@ void CTextEdit::onMenuAct()
 
     QString html;
 
-    /* Property for onReplaceWithLink:
-    LI - Replace with image-link from clipboard
-    LC - copy link to clipboard
-    LR - Replace link with image
-    IC - Copy image to clipboard
-    IL - Replace with link - for images
-    IT - Replace with thumbnail
-    IF - Fit image to window width
-    IO - Open with external program
-    */
     QTextCharFormat fmt = cur.charFormat();
 
-    if (type == "LS")
+    if (type == "SaveLink")
     {
         emit saveAsFile(fmt.anchorHref());
     }
-    else if (type == "LR")
+    else if (type == "ReplaceLinkWithImage")
     {
         QString filePath = a->property("path").toString();
 
         if (isHttpLink(filePath))
-            downloadFile(filePath, "IH");
+            downloadFile(filePath, Image | Inet);
 
-        html = "<img src=\""+ pathToPath(filePath, docPathType) + "\">";
+        html = "<img src=\""+ pathToPath(filePath, DocPathType) + "\">";
     }
-    else if (type == "LI")
+    else if (type == "MakeImageAsLink")
     {
         QTextImageFormat imgFmt = fmt.toImageFormat();
-        imgFmt.setProperty(1, "ITC");  // I - image, T - thumbnail, С - from clipboard
+        imgFmt.setProperty(FlagsProp, Image | Thumb | Clip);
         emit addResFile(imgFmt);
+
         if (imgFmt.name().isEmpty())  return;
 
         QString attr;
@@ -694,7 +759,7 @@ void CTextEdit::onMenuAct()
         html = "<a href=\"" + fmt.anchorHref() + "\"><img src=\""
                 + imgFmt.name() + "\"" + attr + "></a> ";
     }
-    else if (type == "LC")
+    else if (type == "CopyLink")
     {
         QClipboard *clip = QGuiApplication::clipboard();
         clip->setText(fmt.anchorHref());
@@ -702,19 +767,18 @@ void CTextEdit::onMenuAct()
 
     QTextImageFormat imgFmt = fmt.toImageFormat();
 
-    if (type == "IS")
+    if (type == "SaveImage")
     {
         emit saveAsFile(imgFmt.name());
     }
-    else if (type == "IL")
+    else if (type == "ReplaceImageWithLink")
     {
         html = "<a href=\"" + imgFmt.name() + "\">" + QFileInfo(imgFmt.name()).fileName() + "</a> ";
     }
-    else if (type == "IT")
+    else if (type == "ReplaceImageWithThumb")
         html = "<a href=\"" + imgFmt.name() + "\"><img src=\"" + imgFmt.name()
                 + "\" height=" + QString::number(thumbHeight) + "></a> ";
-    // Fit image to window width
-    else if (type == "IF")
+    else if (type == "FitImage")
     {
         if (QApplication::keyboardModifiers() & Qt::CTRL)
         {
@@ -767,16 +831,16 @@ void CTextEdit::onMenuAct()
             }
         }
     }
-    else if (type == "IC")
+    else if (type == "CopyImage")
     {
-        QString path = pathToPath(imgFmt.name(), fullPathType);
+        QString path = pathToPath(imgFmt.name(), FullPathType);
         QImage image(path);
         qDebug() << "CTextEdit::onMenuAct:   IC:   image:  " << path << image.isNull();
         Q_ASSERT(!image.isNull());
         image.setColorSpace(QColorSpace());  //++ image recognized in insertFromMimeData
         QApplication::clipboard()->setImage(image, QClipboard::Clipboard);
     }
-    else if (type == "IO")
+    else if (type == "OpenImage")
     {
         QString filePath = a->property("path").toString();
         if (!filePath.isEmpty())
@@ -788,7 +852,7 @@ void CTextEdit::onMenuAct()
         QTextFragment frag = getCurrFrag(cur);
         if (frag.isValid())
         {
-            cur.setPosition(frag.position());  //++
+            cur.setPosition(frag.position()); 
             cur.setPosition(frag.position() + frag.length(), QTextCursor::KeepAnchor);
             cur.beginEditBlock();
             cur.removeSelectedText();
@@ -803,15 +867,8 @@ void CTextEdit::onMenuAct2()
 {
     QAction* act = qobject_cast<QAction*>(sender());
     QString s = act->data().toString();
-    /* Property:
-    CH - Copy HTML
-    PP - Paste as plain text
-    PI - Paste as image
-    L - Insert line
-    D - Insert current date
-    */
 
-    if (s == "CH")
+    if (s == "CopyHtml")
     {
         QTextCursor cur = textCursor();
         if (cur.hasSelection())
@@ -823,14 +880,13 @@ void CTextEdit::onMenuAct2()
             }
         }
     }
-    else if (s == "PP")
+    else if (s == "PasteAsPlainText")
     {
         QClipboard *clip = QApplication::clipboard();
         const QMimeData *mimeData = clip->mimeData();
         if (mimeData->hasText())
         {
             QString text = clip->text();
-            //insertPlainText(text);
             QTextCursor cur = textCursor();
             QFont font = textCursor().charFormat().font();
             QTextCharFormat fmt;
@@ -841,26 +897,26 @@ void CTextEdit::onMenuAct2()
             cur.endEditBlock();
         }
     }
-    else if (s == "PI")
+    else if (s == "PasteAsImage")
     {
          QString imageLink = act->property("http").toString();
 
-         downloadFile(imageLink, "IH");
+         downloadFile(imageLink, Image | Inet);
 
-         textCursor().insertHtml("<img src=\"" + pathToPath(imageLink, docPathType) + "\">");
+         textCursor().insertHtml("<img src=\"" + pathToPath(imageLink, DocPathType) + "\">");
     }
-    else if (s == "L")
+    else if (s == "InsertLine")
     {
         QTextDocumentFragment fr = QTextDocumentFragment::fromHtml("<hr><br>");
         textCursor().insertFragment(fr);
         ensureCursorVisible();
     }
-    else if (s == "D")
+    else if (s == "InsertCurrentDate")
     {
         QDateTime dt = QDateTime::currentDateTime();
         insertPlainText(dt.toString("d.MM.yyyy "));
     }
-    else if (s == "MB")
+    else if (s == "MergeBlocks")
     {
 
         QTextCursor cur = textCursor();
@@ -884,7 +940,6 @@ void CTextEdit::onMenuAct2()
         QTextCursor cur2 = textCursor();
         cur2.setPosition(begin);
         cur2.movePosition(QTextCursor::StartOfBlock);
-        //cur2.insertBlock(blBegin.blockFormat(), blBegin.charFormat());
         cur2.beginEditBlock();
 
         for (QTextBlock b = blBegin; b.isValid(); b = b.next())
@@ -906,6 +961,121 @@ void CTextEdit::onMenuAct2()
         cur.removeSelectedText();
         cur2.endEditBlock();
     }
+    else if (s == "CreateAnchorLink")
+    {
+        QTextCursor cur = textCursor();
+        if (cur.hasSelection())
+        {
+            QString href = QString::number(time(0));
+            cur.beginEditBlock();
+            QString link = QString("<a href=\"#") + href + "\">" + cur.selection().toPlainText() + "</a>";
+            cur.insertHtml(link);
+            cur.endEditBlock();
+        }
+    }
+    else if (s == "InsertAnchor")
+    {
+        QClipboard *clip = QApplication::clipboard();
+        const QMimeData *mimeData = clip->mimeData();
+        QString text = clip->text();
+        QTextFormat msg;
+
+        if (mimeData->hasText() && text.left(1) == "#")
+        {
+            QString anchorName = text.mid(1);
+            bool isAnchorExists = false;
+
+            QTextBlock bl = document()->begin();
+
+            while (bl.isValid())
+            {
+                QTextBlock::iterator it;
+
+                for (it = bl.begin(); !(it.atEnd()); ++it)
+                {
+                    QTextFragment currFrag = it.fragment();
+
+                    if (!currFrag.isValid())
+                        continue;
+
+                    QTextCharFormat fmt = currFrag.charFormat();
+
+                    if (!fmt.isAnchor() || !fmt.anchorHref().isEmpty())
+                        continue;
+
+                    if (fmt.anchorName() == anchorName)  // anchorNames().value(0) ?
+                        isAnchorExists = true;
+                }
+
+                bl = bl.next();
+            }
+
+            if (isAnchorExists)
+            {
+                emitMessage(Warning, "Anchor already exists.");
+            }
+            else
+            {
+                // &#8203;  - is zero space
+                QString s = QString("<a name=\"") + anchorName + "\">&#8203;</a>";  // &nbsp; <br> &#8203;
+                qDebug() << "CTextEdit::onMenuAct2:    InsertAnchor:  " << s;
+
+                QTextDocumentFragment frag = QTextDocumentFragment::fromHtml(s);
+
+                QTextCursor cur = textCursor();
+                cur.beginEditBlock();
+                cur.insertFragment(frag);
+                cur.endEditBlock();
+
+                emitMessage(StatusBar, "Anchor inserted (" + anchorName + ").");
+            }
+        }
+        else
+        {
+            emitMessage(Warning, "No anchor link in the clipboard.");
+        }
+    }
+    else if (s == "DeleteAnchor")
+    {
+        QString anchorName = act->property("AnchorName").toString();
+        qDebug() << "CTextEdit::onMenuAct2:    DeleteAnchor:  anchorName: " << anchorName;
+        if (anchorName.isEmpty())  return;
+
+        QTextBlock bl = document()->begin();
+
+        while (bl.isValid())
+        {
+            QTextBlock::iterator it;
+
+            for (it = bl.begin(); !(it.atEnd()); ++it)
+            {
+                QTextFragment currFrag = it.fragment();
+
+                if (!currFrag.isValid())
+                    continue;
+
+                QTextCharFormat fmt = currFrag.charFormat();
+
+                if (!fmt.isAnchor() || !fmt.anchorHref().isEmpty() || fmt.anchorName() != anchorName)
+                    continue;
+
+                qDebug() << "CTextEdit::onMenuAct2:    Deleting anchor:  " << fmt.anchorHref() << fmt.anchorName();
+
+                QTextCursor cur = textCursor();
+                cur.setPosition(currFrag.position());
+                cur.setPosition(currFrag.position() + currFrag.length(), QTextCursor::KeepAnchor);
+                cur.removeSelectedText();
+
+                emitMessage(StatusBar, "Anchor deleted (" + anchorName + ").");
+
+                return;
+            }
+
+            bl = bl.next();
+        }
+    }
+    else
+        qDebug() << "CTextEdit::onMenuAct2:    Error: unknown act: " << act;
 }
 
 
@@ -930,11 +1100,25 @@ QTextFragment CTextEdit::getCurrFrag(QTextCursor &cur)
 }
 
 
+bool CTextEdit::secondPassed(QString addr)
+{
+    time_t t = time(NULL);
+
+    if (!netReqTime.contains(addr) || netReqTime[addr] <= t)
+    {
+        netReqTime[addr] = t + 1;
+        return true;
+    }
+
+    return false;
+}
+
+
 // + runs on paste
 // type - https://doc.qt.io/qt-5/qtextdocument.html#ResourceType-enum
 QVariant CTextEdit::loadResource(int type, const QUrl &name)
 {
-    qDebug() << "loadResource: " << name;
+    qDebug() << "CTextEdit::loadResource:    " << name;
 
     if (type == QTextDocument::ImageResource)
     {
@@ -942,6 +1126,7 @@ QVariant CTextEdit::loadResource(int type, const QUrl &name)
         QString fileName;
         QString filePath;
         QString addr = name.toString();
+        qDebug() << "CTextEdit::loadResource:    addr  filesDir  " << addr << filesDir;
 
         if (addr.indexOf(":/") == 0)
             image = QImage(addr);
@@ -951,38 +1136,56 @@ QVariant CTextEdit::loadResource(int type, const QUrl &name)
                 image = QImage(":/images/linux/no-network.png");
             else
             {
-                // do not need so often
-                int nextTime = 0;
-                time_t t = time(NULL);
-                if (netReqTime.contains(addr))
-                    nextTime = netReqTime[addr];
-
-                if (nextTime <= t)
+                if (secondPassed(addr))
                 {
-                    netReqTime[addr] = t + 1;
-
-                    QString fn = downloadFile(name.toString(), "IH");
+                    QString fn = downloadFile(name.toString(), Image | Inet);
 
                     if (!fn.isEmpty())
                     {
-                        qDebug() << "loadResource: loaded image=" << fn;
+                        qDebug() << "loadResource:   loaded http file=" << fn;
                         fileName = QFileInfo(fn).fileName();
-                        if (!document()->isModified())
-                            document()->setModified(true);
                     }
                 }
             }
         }
         else
-            fileName = QFileInfo(name.toString()).fileName();
+        {
+            qDebug() << "CTextEdit::loadResource:    not isHttpLink";
+
+            // if local addr and not filesDir = for copy from other tab
+            if (addr.left(1) == "/" && addr.indexOf(filesDir) < 0)
+            {
+                if (secondPassed(addr))
+                {
+                    qDebug() << "CTextEdit::loadResource:    local not filesDir = " << filesDir;
+                    QString fn = downloadFile(name.toString(), Image | Local);
+
+                    if (!fn.isEmpty())
+                    {
+                        qDebug() << "loadResource: local file, image=" << fn;
+                        fileName = QFileInfo(fn).fileName();
+                    }
+                }
+            }
+            else
+            {
+                qDebug() << "CTextEdit::loadResource:  local  filesDir";
+
+                fileName = QFileInfo(addr).fileName();
+            }
+        }
 
         if (!fileName.isEmpty())
         {
             QByteArray ba;
-            filePath = pathToPath(fileName, fullPathType);
+
+            filePath = pathToPath(fileName, FullPathType);
+
             QFile file(filePath);
-            if(file.open(QIODevice::ReadOnly))
+
+            if (file.open(QIODevice::ReadOnly))
                 ba = file.readAll();
+
             QString format = QFileInfo(fileName).suffix().toUpper();
             qDebug() << "loadResource file.readAll " << filePath << fileName << format << ba.size();
 
@@ -1107,8 +1310,12 @@ QList<QString> CTextEdit::getResourceFileList(QTextDocument* docum)
         bl = bl.next();
     }
 
-    //foreach(QString name, fileList)
-        //qDebug() << name;
+#ifndef QT_NO_DEBUG_OUTPUT
+
+    foreach(QString name, fileList)
+        qDebug() << name;
+
+#endif
 
     return fileList;
 }
@@ -1153,15 +1360,15 @@ void CTextEdit::setResourceDir(QString dir, QTextDocument* docum)
 
                 if(fmt.isImageFormat())
                 {
-                    QTextImageFormat imgFmt = fmt.toImageFormat();
-                    fileName = dir + "/" + QFileInfo(imgFmt.name()).fileName();
-                    qDebug() << "setResDir: new image name: " << fileName << currFrag.text() << currFrag.length();
+                    QTextImageFormat* pfmt = (QTextImageFormat*)&fmt;
+                    fileName = dir + "/" + QFileInfo(pfmt->name()).fileName();
                     fileName.replace(" ", "%20");
-                    imgFmt.setName(fileName);
+                    pfmt->setName(fileName);
+                    qDebug() << "setResDir: new image name: " << fileName << currFrag.text() << currFrag.length();
 
                     cur.setPosition(currFrag.position());
                     cur.setPosition(currFrag.position() + currFrag.length(), QTextCursor::KeepAnchor);
-                    cur.setCharFormat(imgFmt);
+                    cur.setCharFormat(fmt);
                 }
             }
         }
@@ -1171,3 +1378,22 @@ void CTextEdit::setResourceDir(QString dir, QTextDocument* docum)
 }
 
 
+void CTextEdit::emitMessage(MessageType type, QString text)
+{
+    QTextFormat msg;
+
+    msg.setProperty(TypeProp, type);
+    msg.setProperty(TextProp, text);
+
+    emit message(msg);
+}
+
+
+void CTextEdit::setImageQuality(int quality)
+{
+    int q = quality;
+    if (quality < -1)  q = -1;
+    else if (quality > 100)  q = 100;
+
+    imageQuality = q;
+}

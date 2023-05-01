@@ -15,6 +15,10 @@ class CFindTextPanel : public QWidget
 {
     Q_OBJECT
 public:
+    enum FindStatus { None, AtBegin, AtEnd };
+    const QSize IconSize = QSize(22, 22);
+    const int ButtonWidth = 30;
+
     explicit CFindTextPanel(QWidget *parent = nullptr);
     void setTextEdit(QTextEdit *te);
     void setFont(const QFont &font);

@@ -11,6 +11,10 @@ class CColorToolButton : public QToolButton
 {
     Q_OBJECT
 public:
+    const int PixmapWidth = 18;
+    const int PixmapHeight = 18;
+    const QString CustomColorCode = "#000001";
+
     CColorToolButton(QWidget* parent);
     void setCustomColors(QList<QColor> colorList);
     void setCustomColors(QStringList colorNameList);

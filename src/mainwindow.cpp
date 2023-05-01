@@ -5,61 +5,6 @@
 #include <QDesktopServices>
 
 
-void FileTreeView::keyPressEvent(QKeyEvent *ev)
-{
-    if (state() != QAbstractItemView::EditingState)
-    {
-        if (ev->key() == Qt::Key_Return)
-            emit sigKeyEnter(currentIndex());
-        else if (ev->key() == Qt::Key_Backspace)
-        {
-            const QFileSystemModel* fsModel = (QFileSystemModel*)model();
-            if (fsModel)
-            {
-                QModelIndex index = currentIndex();
-
-                if (!fsModel->isDir(index))
-                {
-                    index = fsModel->parent(index);
-                    setCurrentIndex(index);
-                }
-
-                collapse(index);
-            }
-        }
-    }
-
-    QTreeView::keyPressEvent(ev);
-}
-
-
-bool FileTreeView::viewportEvent(QEvent *ev)
-{
-    if (ev->type() == QEvent::ToolTip)
-    {
-        QHelpEvent *helpEvent = static_cast<QHelpEvent*>(ev);
-        QModelIndex index = indexAt(helpEvent->pos());
-
-        if (index.isValid())
-        {
-            QSize sizeHint = itemDelegate(index)->sizeHint(viewOptions(), index);
-            QRect rItem(0, 0, sizeHint.width(), sizeHint.height());
-            QRect rVisual = visualRect(index);
-            if (rItem.width() > rVisual.width())
-            {
-                QFileSystemModel* model = (QFileSystemModel*)index.model();
-                QToolTip::showText(helpEvent->globalPos(), model->fileName(index), this, rVisual, 6000);
-                return true;  // other QTreeView::viewportEvent closing tooltip
-                // Returns true to indicate to the event system that the event has been handled, and needs no further processing;
-                // otherwise returns false to indicate that the event should be propagated further.
-            }
-        }
-    }
-
-    return QTreeView::viewportEvent(ev);
-}
-
-
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -92,6 +37,8 @@ MainWindow::MainWindow(QWidget *parent)
     iconDir = ":/images/linux/";
     if (this->palette().background().color().lightness() < 100)
         iconDir = ":/images/linux/dark/";
+
+    setWindowIcon(QIcon(":/images/linux/app2.png"));
 
 
     QSettings set(iniFileName, QSettings::IniFormat);
@@ -214,7 +161,6 @@ void MainWindow::createFileTree(const QString& path)
     FileSystemModel* model = new FileSystemModel(this);
     model->setRootPath("");
     model->setOption(QFileSystemModel::DontUseCustomDirectoryIcons);
-    //model->setOption(QFileSystemModel::DontWatchForChanges);
     model->setNameFilterDisables(false);
     QStringList filter;
     filter << "*.maff" << "*.html";
@@ -232,7 +178,6 @@ void MainWindow::createFileTree(const QString& path)
     if (rootIndex.isValid())
     {
         fileTree->setRootIndex(rootIndex);
-        //model->sort(0, Qt::AscendingOrder);
     }
 
     fileTree->setAnimated(false);
@@ -538,4 +483,59 @@ void MainWindow::onDirectoryLoaded(const QString &path)
 void MainWindow::onFileRenamed(const QString &path, const QString &oldName, const QString &newName)
 {
     qDebug() << "MainWindow::onFileRenamed:    " << path;
+}
+
+
+void FileTreeView::keyPressEvent(QKeyEvent *ev)
+{
+    if (state() != QAbstractItemView::EditingState)
+    {
+        if (ev->key() == Qt::Key_Return)
+            emit sigKeyEnter(currentIndex());
+        else if (ev->key() == Qt::Key_Backspace)
+        {
+            const QFileSystemModel* fsModel = (QFileSystemModel*)model();
+            if (fsModel)
+            {
+                QModelIndex index = currentIndex();
+
+                if (!fsModel->isDir(index))
+                {
+                    index = fsModel->parent(index);
+                    setCurrentIndex(index);
+                }
+
+                collapse(index);
+            }
+        }
+    }
+
+    QTreeView::keyPressEvent(ev);
+}
+
+
+bool FileTreeView::viewportEvent(QEvent *ev)
+{
+    if (ev->type() == QEvent::ToolTip)
+    {
+        QHelpEvent *helpEvent = static_cast<QHelpEvent*>(ev);
+        QModelIndex index = indexAt(helpEvent->pos());
+
+        if (index.isValid())
+        {
+            QSize sizeHint = itemDelegate(index)->sizeHint(viewOptions(), index);
+            QRect rItem(0, 0, sizeHint.width(), sizeHint.height());
+            QRect rVisual = visualRect(index);
+            if (rItem.width() > rVisual.width())
+            {
+                QFileSystemModel* model = (QFileSystemModel*)index.model();
+                QToolTip::showText(helpEvent->globalPos(), model->fileName(index), this, rVisual, 6000);
+                return true;  // other QTreeView::viewportEvent closing tooltip
+                // Returns true to indicate to the event system that the event has been handled, and needs no further processing;
+                // otherwise returns false to indicate that the event should be propagated further.
+            }
+        }
+    }
+
+    return QTreeView::viewportEvent(ev);
 }

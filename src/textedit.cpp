@@ -1,3 +1,5 @@
+// 1.3.8 - scrollbar
+// 1.3.1 - anchors
 #include <QtDebug>
 #include <QAction>
 #include <QClipboard>
@@ -52,6 +54,7 @@ QString untitledFileName = "untitled";
 QSize fileDialogSize;
 QString fileDialogCurrFilter;
 QString dlgCurrFilter[6];
+enum FileDialog { Open, Save, Export, Attach, SaveRes };
 
 int CWaitCursor::waitCursorStatus = 0;
 
@@ -102,11 +105,8 @@ TextEdit::TextEdit(QWidget *parent, QSettings& set)
 
     appPath = QCoreApplication::applicationDirPath();
     QString appBaseName = QFileInfo(QCoreApplication::applicationFilePath()).baseName();
-    //configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/" + appBaseName;
-    //dataPath = configPath;
     homePath = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
     saveDir = homePath;
-    //tempDir = "/tmp";
     tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
     printf("appDir=%s\n", appPath.toUtf8().data());
     printf("tempDir=%s\n", tempDir.toUtf8().data());
@@ -121,7 +121,7 @@ TextEdit::TextEdit(QWidget *parent, QSettings& set)
     mimeTypes["pdf"] = "PDF files (*.pdf)";
     mimeTypes["epub"] = "Epub files (*.epub)";
 
-    dlgCurrFilter[1] = mimeTypes["maff"];
+    dlgCurrFilter[Save] = mimeTypes["maff"];
 
     connect(wtTabs, &QTabWidget::currentChanged, this, &TextEdit::onTabChanged);
     connect(wtTabs, &QTabWidget::tabCloseRequested, this, &TextEdit::onTabCloseRequest);
@@ -129,8 +129,6 @@ TextEdit::TextEdit(QWidget *parent, QSettings& set)
     connect(wtTabs, &QTabBar::customContextMenuRequested, this, &TextEdit::onTabContextMenu);
 
     connect(QApplication::clipboard(), &QClipboard::dataChanged, this, &TextEdit::clipboardDataChanged);
-
-    connect(this, &TextEdit::httpAllFinished, this, &TextEdit::onHttpAllFinished, Qt::QueuedConnection);
 
     keyF3 = new QShortcut(this);
     keyF3->setKey(Qt::Key_F3);
@@ -164,7 +162,7 @@ TextEdit::TextEdit(QWidget *parent, QSettings& set)
 
     editorLayoutState = set.value("editorLayoutState", QByteArray()).toByteArray();
 
-    fileDialogSize = set.value("fileDialogSize", QSize(760, 600)).toSize();
+    fileDialogSize = set.value("fileDialogSize", DefFileDialogSize).toSize();
 
     lastSuffix = set.value("lastSuffix", "").toString();
 
@@ -199,10 +197,12 @@ TextEdit::TextEdit(QWidget *parent, QSettings& set)
     currBgColorName = set.value("bgColorName", slBgColors[0]).toString();
 
     winConf = new CConfigDialog(this);
-    winConf->resize(set.value("winConfSize", QSize(630, 440)).toSize());
+    winConf->resize(set.value("winConfSize", DefWinConfSize).toSize());
     winConf->setHeaderState(set.value("configListHeader", QByteArray()).toByteArray());
 
     isShrinkHtml = set.value("shrinkHtml", false).toBool();
+
+    imageQuality = set.value("imageQuality", -1).toInt();
 
     set.endGroup();
     set.beginGroup( "public" );
@@ -213,7 +213,7 @@ TextEdit::TextEdit(QWidget *parent, QSettings& set)
 
 
     setToolButtonStyle(Qt::ToolButtonIconOnly);
-    setupFileActions();
+    setupMenuActions();
     setupTextActions();
 
     if (!editorLayoutState.isEmpty())
@@ -233,18 +233,20 @@ void TextEdit::setPublicParams(QSettings &set)
     if (!s.isEmpty())
         textSS = s;
 
-    thumbHeight = set.value("thumbHeight", 100).toInt();
+    thumbHeight = set.value("thumbHeight", DefThumbHeigh).toInt();
 
     isUseNativeFileDlg = set.value("useNativeFileDialogs", true).toBool();
     isNetworkEnabled = set.value("networkEnabled", true).toBool();
 
     lineWrapWidth = set.value("lineWrapWidth", 0).toInt();
-    if (lineWrapWidth < 100 || lineWrapWidth > 3840)
+    if (lineWrapWidth < MinLineWrapWidth || lineWrapWidth > MaxLineWrapWidth)
         lineWrapWidth = 0;
 
     pdfMargins = set.value("pdfMargins", QRect(0, 0, 0, 0)).toRect();
 
-    tabTitleLen = set.value("tabTitleLen", 30).toInt();
+    tabTitleLen = set.value("tabTitleLen", DefTabTitleLen).toInt();
+
+    backupDir = set.value("backupDir", "").toString().trimmed();
 }
 
 
@@ -289,6 +291,7 @@ bool TextEdit::close(QSettings& set)
     set.setValue("configListHeader", winConf->headerState());
 
     set.setValue("shrinkHtml", isShrinkHtml);
+    set.setValue("imageQuality", imageQuality);
 
     return true;
 }
@@ -296,46 +299,75 @@ bool TextEdit::close(QSettings& set)
 
 void TextEdit::setupParams()
 {
-    PARAM_STRUCT param;
+    CConfigList::Param param;
 
-    param.label = "Default text font";  param.name = "textFont";  param.type = CConfigList::TypeFont;
-        param.defValue = defaultFont;  param.comment = "";  params.append(param);
+    param.label = "Default text font";
+    param.name = "textFont";
+    param.type = CConfigList::TypeFont;
+    param.defValue = defaultFont;
+    param.comment = "";
+    params.append(param);
 
-    param.label = "Line wrap width";  param.name = "lineWrapWidth"; param.type = CConfigList::TypeNumber;
-        param.defValue = 0;  param.comment = "Pixels. Default 0, no wrap.";  params.append(param);
+    param.label = "Line wrap width";
+    param.name = "lineWrapWidth";
+    param.type = CConfigList::TypeNumber;
+    param.defValue = 0;
+    param.comment = "Pixels. Default 0, no wrap.";
+    params.append(param);
 
-    param.label = "Thumbnail height";  param.name = "thumbHeight"; param.type = CConfigList::TypeNumber;
-        param.defValue = 100;  param.comment = "Pixels. Default 100.";  params.append(param);
+    param.label = "Thumbnail height";
+    param.name = "thumbHeight";
+    param.type = CConfigList::TypeNumber;
+    param.defValue = DefThumbHeigh;
+    param.comment = "Pixels. Default 100.";
+    params.append(param);
 
-    param.label = "Use native file dialogs";  param.name = "useNativeFileDialogs";  param.type = CConfigList::TypeBool;
-        param.defValue = true;  param.comment = "";  params.append(param);
+    param.label = "Use native file dialogs";
+    param.name = "useNativeFileDialogs";
+    param.type = CConfigList::TypeBool;
+    param.defValue = true;
+    param.comment = "";
+    params.append(param);
 
-    param.label = "Network enabled";  param.name = "networkEnabled";  param.type = CConfigList::TypeBool;
-        param.defValue = true;  param.comment = "For paste HTML with images.";  params.append(param);
+    param.label = "Network enabled";
+    param.name = "networkEnabled";
+    param.type = CConfigList::TypeBool;
+    param.defValue = true;
+    param.comment = "For paste HTML with images.";
+    params.append(param);
 
-    param.label = "Tab title length";  param.name = "tabTitleLen";  param.type = CConfigList::TypeNumber;
-        param.defValue = TAB_TITLE_LEN;  param.comment = "Characters. Default 30.";  params.append(param);
+    param.label = "Tab title length";
+    param.name = "tabTitleLen";
+    param.type = CConfigList::TypeNumber;
+    param.defValue = TAB_TITLE_LEN;
+    param.comment = "Characters. Default 30.";
+    params.append(param);
+
+    param.label = "Backup directory";
+    param.name = "backupDir";
+    param.type = CConfigList::TypeDir;
+    param.defValue = "";
+    param.comment = "";
+    params.append(param);
 }
 
 
-void TextEdit::setupFileActions()
+void TextEdit::setupMenuActions()
 {
     QToolBar *tb = addToolBar(tr("Base actions"));
     tb->setObjectName("Main toolbar");
-    tb->setIconSize(QSize(22, 22));
+    tb->setIconSize(MenuIconSize);
 
     QMenu *menu = menuBar()->addMenu(tr("&File"));
 
     recentMenu = new QMenu("&Recent files", this);
     addRecentFile();
 
-    //const QIcon newIcon = QIcon::fromTheme("document-new", QIcon(iconDir + "filenew.png"));
     const QIcon newIcon(iconDir + "filenew.png");
     QAction *a = menu->addAction(newIcon,  tr("&New"), this, &TextEdit::fileNew);
     a->setShortcut(QKeySequence::New);
     tb->addAction(a);
 
-    //const QIcon openIcon = QIcon::fromTheme("document-open", QIcon(iconDir + "fileopen.png"));
     const QIcon openIcon = QIcon(iconDir + "fileopen.png");
     a = menu->addAction(openIcon, tr("&Open"), this, &TextEdit::fileOpen);
     a->setShortcut(QKeySequence::Open);
@@ -345,7 +377,6 @@ void TextEdit::setupFileActions()
     btOpen->setMenu(recentMenu);
     tb->addWidget(btOpen);
 
-    //const QIcon saveIcon = QIcon::fromTheme("document-save", QIcon(iconDir + "filesave.png"));
     const QIcon saveIcon = QIcon(iconDir + "filesave.png");
     actionSave = menu->addAction(saveIcon, tr("&Save"), this, &TextEdit::onFileSave);
     actionSave->setShortcut(QKeySequence::Save);
@@ -363,18 +394,22 @@ void TextEdit::setupFileActions()
     editActs.append(a);
 
 #ifndef QT_NO_PRINTER
-    //const QIcon printIcon = QIcon::fromTheme("document-print", QIcon(iconDir + "/fileprint.png"));
     const QIcon printIcon = QIcon(iconDir + "/fileprint.png");
     a = menu->addAction(printIcon, tr("&Print"), this, &TextEdit::filePrint);
     a->setPriority(QAction::LowPriority);
     a->setShortcut(QKeySequence::Print);
     editActs.append(a);
 
-    //const QIcon filePrintIcon = QIcon::fromTheme("fileprint", QIcon(iconDir + "fileprint.png"));
     const QIcon filePrintPreIcon = QIcon(iconDir + "fileprintpreview.png");
     a = menu->addAction(filePrintPreIcon, tr("Print Pre&view"), this, &TextEdit::filePrintPreview);
     editActs.append(a);
+
+    a = menu->addAction(filePrintPreIcon, tr("Print Pre&view"), this, &TextEdit::filePrintPreview);
+    editActs.append(a);
 #endif
+
+    a = menu->addAction(tr("Make backup file"), this, &TextEdit::onMakeBackup);
+    editActs.append(a);
 
     menu->addSeparator();
 
@@ -391,46 +426,38 @@ void TextEdit::setupFileActions()
 //------------------------------------------------------------------------------------------------
 //setupEditActions
 
+    // 1.3.6 edit shortcuts when text in focus only
+
     QMenu *editMenu = menuBar()->addMenu(tr("&Edit"));
 
-    //const QIcon copyIcon = QIcon::fromTheme("edit-copy", QIcon(iconDir + "editcopy.png"));
     const QIcon copyIcon = QIcon(iconDir + "editcopy.png");
     actionCopy = editMenu->addAction(copyIcon, tr("&Copy"), this, &TextEdit::onCopy);
     actionCopy->setPriority(QAction::LowPriority);
-    actionCopy->setShortcut(QKeySequence::Copy);
     tb->addAction(actionCopy);
     editActs.append(actionCopy);
 
-    //const QIcon pasteIcon = QIcon::fromTheme("edit-paste", QIcon(iconDir + "editpaste.png"));
     const QIcon pasteIcon = QIcon(iconDir + "editpaste.png");
     actionPaste = editMenu->addAction(pasteIcon, tr("&Paste"), this, &TextEdit::onPaste);
     actionPaste->setPriority(QAction::LowPriority);
-    actionPaste->setShortcut(QKeySequence::Paste);
     tb->addAction(actionPaste);
     if (const QMimeData *md = QApplication::clipboard()->mimeData())
         actionPaste->setEnabled(md->hasText());
     editActs.append(actionPaste);
 
-    //const QIcon cutIcon = QIcon::fromTheme("edit-cut", QIcon(iconDir + "editcut.png"));
     const QIcon cutIcon = QIcon(iconDir + "editcut.png");
     actionCut = editMenu->addAction(cutIcon, tr("&Cut"), this, &TextEdit::onCut);
     actionCut->setPriority(QAction::LowPriority);
-    actionCut->setShortcut(QKeySequence::Cut);
     tb->addAction(actionCut);
     editActs.append(actionCut);
 
-    //const QIcon undoIcon = QIcon::fromTheme("edit-undo", QIcon(iconDir + "editundo.png"));
     const QIcon undoIcon = QIcon(iconDir + "editundo.png");
     actionUndo = editMenu->addAction(undoIcon, tr("&Undo"), this, &TextEdit::onUndo);
-    actionUndo->setShortcut(QKeySequence::Undo);
     actionUndo->setToolTip("Undo\nCtrl+    -  undo all");
     tb->addAction(actionUndo);
     editActs.append(actionUndo);
 
     const QIcon redoIcon = QIcon(iconDir + "editredo.png");
     actionRedo = editMenu->addAction(redoIcon, tr("&Redo"), this, &TextEdit::onRedo);
-    //actionRedo->setShortcut(QKeySequence::Redo);
-    actionRedo->setShortcut(Qt::CTRL + Qt::Key_Y);
     actionRedo->setToolTip("Redo\nCtrl+    -  redo all");
     tb->addAction(actionRedo);
     editActs.append(actionRedo);
@@ -459,7 +486,6 @@ void TextEdit::setupFileActions()
 
     const QIcon boldIcon = QIcon(iconDir + "textbold.png");
     actionTextBold = menu->addAction(boldIcon, tr("&Bold"), this, &TextEdit::textBold);
-    //actionTextBold->setShortcut(Qt::CTRL + Qt::Key_B);
     actionTextBold->setPriority(QAction::LowPriority);
     QFont bold;
     bold.setBold(true);
@@ -471,7 +497,6 @@ void TextEdit::setupFileActions()
     const QIcon italicIcon = QIcon(iconDir + "textitalic.png");
     actionTextItalic = menu->addAction(italicIcon, tr("&Italic"), this, &TextEdit::textItalic);
     actionTextItalic->setPriority(QAction::LowPriority);
-    //actionTextItalic->setShortcut(Qt::CTRL + Qt::Key_I);
     QFont italic;
     italic.setItalic(true);
     actionTextItalic->setFont(italic);
@@ -481,7 +506,6 @@ void TextEdit::setupFileActions()
 
     const QIcon underlineIcon = QIcon(iconDir + "textunder.png");
     actionTextUnderline = menu->addAction(underlineIcon, tr("&Underline"), this, &TextEdit::textUnderline);
-    //actionTextUnderline->setShortcut(Qt::CTRL + Qt::Key_U);
     actionTextUnderline->setPriority(QAction::LowPriority);
     QFont underline;
     underline.setUnderline(true);
@@ -492,14 +516,12 @@ void TextEdit::setupFileActions()
 
     const QIcon largerIcon = QIcon(iconDir + "zoomin.png");
     actionTextLarger = menu->addAction(largerIcon, tr("&Larger"), this, &TextEdit::onTextLarger);
-    //actionTextLarger->setShortcut(Qt::CTRL + Qt::Key_L);
     actionTextLarger->setToolTip("Larger\nCtrl+    -  +1px for image\n              -  +1% for table column\nShift+  -  original size for image");
     tb->addAction(actionTextLarger);
     editActs.append(actionTextLarger);
 
     const QIcon smallerIcon = QIcon(iconDir + "zoomout.png");
     actionTextSmaller = menu->addAction(smallerIcon, tr("&Smaller"), this, &TextEdit::onTextSmaller);
-    //actionTextLarger->setShortcut(Qt::CTRL + Qt::Key_M);
     actionTextSmaller->setToolTip("Smaller\nCtrl+     -  -1px for image\n               -  -1% for table column");
     tb->addAction(actionTextSmaller);
     editActs.append(actionTextSmaller);
@@ -562,8 +584,7 @@ void TextEdit::setupFileActions()
 
     const QIcon checkboxIcon = QIcon(iconDir + "checkbox-checked.png");
     actionToggleCheckState = menu->addAction(checkboxIcon, tr("Task list"), this, &TextEdit::setChecked);
-    //actionToggleCheckState->setShortcut(Qt::CTRL + Qt::Key_K);
-    actionToggleCheckState->setCheckable(true);
+     actionToggleCheckState->setCheckable(true);
     actionToggleCheckState->setPriority(QAction::LowPriority);
     tb->addAction(actionToggleCheckState);
     editActs.append(actionToggleCheckState);
@@ -575,55 +596,55 @@ void TextEdit::setupFileActions()
     const QIcon createTabIcon = QIcon(iconDir + "table-create.png");
     a = new QAction(createTabIcon, tr("Create table"), this);
     a->setToolTip("Shift+  -  with % column width");
-    a->setData("CT");
+    a->setData("CreateTable");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
     const QIcon addTabRowIcon = QIcon(iconDir + "table-add-row.png");
     a = new QAction(addTabRowIcon, tr("Add row"), this);
-    a->setData("AR");
+    a->setData("AddRow");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
     const QIcon addTabColIcon = QIcon(iconDir + "table-add-column.png");
     a = new QAction(addTabColIcon, tr("Add column"), this);
-    a->setData("AC");
+    a->setData("AddColumn");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
     const QIcon insTabRowIcon = QIcon(iconDir + "table-insert-row.png");
     a = new QAction(insTabRowIcon, tr("Insert row"), this);
-    a->setData("IR");
+    a->setData("InsertRow");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
     const QIcon insTabColIcon = QIcon(iconDir + "table-insert-column.png");
     a = new QAction(insTabColIcon, tr("Insert column"), this);
-    a->setData("IC");
+    a->setData("InsertColumn");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
     const QIcon delTabRowIcon = QIcon(iconDir + "table-delete-row.png");
     a = new QAction(delTabRowIcon, tr("Delete row"), this);
-    a->setData("DR");
+    a->setData("DeleteRow");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
     const QIcon delTabColIcon = QIcon(iconDir + "table-delete-column.png");
     a = new QAction(delTabColIcon, tr("Delete column"), this);
-    a->setData("DC");
+    a->setData("DeleteColumn");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
     const QIcon mergeCellIcon = QIcon(iconDir + "table-cell-merge.png");
     a = new QAction(mergeCellIcon, tr("Merge selected cells"), this);
-    a->setData("MC");
+    a->setData("MergeCells");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
     const QIcon splitCellIcon = QIcon(iconDir + "table-cell-split.png");
     a = new QAction(splitCellIcon, tr("Split cell"), this);
-    a->setData("SC");
+    a->setData("SplitCell");
     connect(a, &QAction::triggered, this, &TextEdit::onTableMenuAct);
     tableMenu->addAction(a);
 
@@ -631,8 +652,6 @@ void TextEdit::setupFileActions()
     actTableNoAct = new QAction(tableIcon, tr("Table menu"), this);
 
     btTable = new QToolButton(this);
-    //btTable->setIcon(tableIcon);
-    //btTable->setToolTip("Table menu");
     btTable->setDefaultAction(actTableNoAct);
     btTable->setPopupMode(QToolButton::MenuButtonPopup);
     btTable->setMenu(tableMenu);
@@ -667,8 +686,6 @@ void TextEdit::setupFileActions()
 
     actFileBrowser = viewMenu->addAction(tr("File browser"), this, &TextEdit::onFileBrowser);
     actFileBrowser->setCheckable(true);
-    //a->setShortcut(QKeySequence::F2);
-    //actFileBrowser->setChecked(isFileBrowserVisible);
 
 
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -696,7 +713,7 @@ void TextEdit::setupTextActions()
 {
     tbFont = addToolBar(tr("Font family actions"));
     tbFont->setObjectName("Font toolbar");
-    tbFont->setIconSize(QSize(22, 22));
+    tbFont->setIconSize(MenuIconSize);
     tbFont->setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
     addToolBarBreak(Qt::TopToolBarArea);
     addToolBar(tbFont);
@@ -737,7 +754,6 @@ void TextEdit::setupTextActions()
     for (int size : stFontSizes)
     {
         comboSize->addItem(QString::number(size));
-        //qDebug() << "stFontSizes:  " << size;
     }
     tbFont->addWidget(comboSize);
 
@@ -747,19 +763,32 @@ void TextEdit::setupTextActions()
 
 void TextEdit::onHelp()
 {
-    QMessageBox::information(this, appName, tr("Shortcuts:\n\n"
-             "Shift+Space or Shift+Enter  -  break current text format, keep current font\n"
-             "Ctrl+Space or Ctrl+Enter  -  break current text format, set default font\n"
-             "Ctrl+Down  -  create new block, set default font\n"
-             "\nSee tooltips for buttons and menus."
+    QMessageBox::information(this, appName, tr(
+            "Shortcuts:\n"
+            "Shift+Space or Shift+Enter  -  break current text format, keep current font\n"
+            "Ctrl+Space or Ctrl+Enter  -  break current text format, set default font\n"
+            "Ctrl+Down  -  create new block, set default font\n"
+
+            "\nScrollbar:\n"
+            "Ctrl-wheel - Scroll by pages\n"
+            "Ctrl-click above slider - Scroll to top\n"
+            "Ctrl-click below slider - Scroll to bottom\n"
+
+            "\nSee tooltips for buttons and menus.\n"
+
+            "\nHow to create an anchor:\n"
+            "Select text that should become a link. In the context menu click \"Create anchor link\".\n"
+            "The selected text will become a link. In the context menu of this link click \"Copy link to clipboard\".\n"
+            "Set the cursor to the position where the anchor should be. In the context menu click \"Insert anchor\".\n"
+            "Anchor not visible. To remove the anchor click in the context menu of the anchor link item \"Delete anchor\"."
         ));
 }
 
 
 void TextEdit::about()
 {
-    QMessageBox::about(this, tr("About"), tr("mdqtee 1.1.2     (MD QTextEdit Example)        \n"
-        "MD 1.11.2021\n\n"
+    QMessageBox::about(this, tr("About"), tr("mdqtee 1.3.8     (MD QTextEdit Example)        \n"
+        "MD 30.04.2023\n\n"
         "Qt Project MESSAGE (about zip): This project is using private headers and will therefore be tied "
         "to this specific Qt module build version. Running this project against other versions "
         "of the Qt modules may crash at any arbitrary point. "
@@ -777,15 +806,16 @@ void TextEdit::addTab(QString filePath)
                        + "'; font-size:" + QString::number(textFont.pointSize()) + "pt; font-style:normal; }");
     ted->setFontPointSize(textFont.pointSize());  //++ for first input
     ted->document()->setDefaultStyleSheet("table { border-collapse: collapse; border: 1px solid black; } ");
-    ted->document()->setDocumentMargin(6);
+    ted->document()->setDocumentMargin(DocumentMargin);
     ted->setThumbnailHeight(thumbHeight);
+    ted->setImageQuality(imageQuality);
 
     connect(ted, &QTextEdit::cursorPositionChanged, this, &TextEdit::cursorPositionChanged, Qt::QueuedConnection);
     connect(ted, &QTextEdit::currentCharFormatChanged, this, &TextEdit::currentCharFormatChanged);
     connect(ted, &CTextEdit::linkClicked, this, &TextEdit::onLinkClicked);
     connect(ted, &CTextEdit::cursorOnLink, this, &TextEdit::onCursorOnLink);
     connect(ted, &CTextEdit::doubleClick, this, &TextEdit::onTextDoubleClick, Qt::QueuedConnection);
-    connect(ted, &CTextEdit::error, this, &TextEdit::onTedError, Qt::QueuedConnection);
+    connect(ted, &CTextEdit::message, this, &TextEdit::onTedMessage);  // QTextImageFormat not work with Qt::QueuedConnection
     connect(ted, &CTextEdit::saveAsFile, this, &TextEdit::onSaveResAsFile, Qt::QueuedConnection);
     connect(ted, &CTextEdit::addResFile, this, &TextEdit::onAddResFile);
 
@@ -814,7 +844,7 @@ void TextEdit::addTab(QString filePath)
     ted->setNetworkEnabled(isNetworkEnabled);
 
     QFontMetrics fm(textFont);
-    ted->setTabStopWidth(4 * fm.width(' '));
+    ted->setTabStopWidth(TabStopWidth * fm.width(' '));
 
     if (lineWrapWidth)
     {
@@ -861,7 +891,7 @@ void TextEdit::closeTab(int index)
     disconnect(ted, &CTextEdit::linkClicked, this, &TextEdit::onLinkClicked);
     disconnect(ted, &CTextEdit::doubleClick, this, &TextEdit::onTextDoubleClick);
     disconnect(ted, &CTextEdit::cursorOnLink, this, &TextEdit::onCursorOnLink);
-    disconnect(ted, &CTextEdit::error, this, &TextEdit::onTedError);
+    disconnect(ted, &CTextEdit::message, this, &TextEdit::onTedMessage);
     disconnect(ted, &CTextEdit::saveAsFile, this, &TextEdit::onSaveResAsFile);
     disconnect(ted, &CTextEdit::addResFile, this, &TextEdit::onAddResFile);
 
@@ -885,6 +915,8 @@ CTextEdit* TextEdit::currText() const
 
 void TextEdit::setTabModified(bool m)
 {
+    qDebug() << "TextEdit::setTabModified";
+
     int i = wtTabs->currentIndex();
     QString s = wtTabs->tabText(i);
     if (s.indexOf('*') >= 0 != m)
@@ -897,6 +929,8 @@ void TextEdit::setTabModified(bool m)
 
 void TextEdit::onTextChanged(bool m)
 {
+    qDebug() << "TextEdit::onTextChanged";
+
     // called once, no repetitions when entering letters
     actionSave->setEnabled(m);
     setTabModified(m);
@@ -906,6 +940,8 @@ void TextEdit::onTextChanged(bool m)
 
 void TextEdit::onUndoAvailable(bool m)
 {
+    qDebug() << "TextEdit::onUndoAvailable:    "  << m;
+
     actionUndo->setEnabled(m);
 }
 
@@ -964,7 +1000,7 @@ void TextEdit::onTabChanged(int index)
 }
 
 
-bool TextEdit::load(const QString &f, int mode)
+bool TextEdit::load(const QString &f, LoadMode mode)
 {
     if (!QFile::exists(f))
     {
@@ -986,9 +1022,12 @@ bool TextEdit::load(const QString &f, int mode)
         }
     }
 
-    if (mode == 0)
+    if (mode == NewTab)
         addTab(f);
     ted = currText();  // after addTab!
+
+    // show tab then wait
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
 
     QString fn = f;
     QString suffix = QFileInfo(fn).suffix();
@@ -997,7 +1036,7 @@ bool TextEdit::load(const QString &f, int mode)
 
     if (suffix == "html" || suffix == "md")
     {
-        if (!openTempDir(f)) return false;
+        if (!copyToTempDir(f)) return false;
         fn = ted->getFileName();
     }
 
@@ -1012,21 +1051,32 @@ bool TextEdit::load(const QString &f, int mode)
         return false;
 
     QByteArray data = file.readAll();
-    QTextCodec *codec = Qt::codecForHtml(data);
-    QString str = codec->toUnicode(data);
-    QUrl baseUrl = (fn.front() == QLatin1Char(':') ? QUrl(f) : QUrl::fromLocalFile(f)).adjusted(QUrl::RemoveFilename);
+    QString str;
 
-    ted->document()->setBaseUrl(baseUrl);
-    ted->setFileName(fn);
-    ted->mime = suffix;
-    if (suffix != "txt")
-        ted->setFilesDir(QFileInfo(fn).path() + "/" + QFileInfo(fn).baseName() + "_files");
-    ted->zipFileName = f;
-
-    //if (Qt::mightBeRichText(str))
     if (suffix == "html" || suffix == "maff")
     {
-        ted->setHtml(str);
+        QTextCodec *codec = Qt::codecForHtml(data);
+        str = codec->toUnicode(data);
+    }
+    else
+        str = data;
+
+    ted->setFileName(fn);
+    ted->mime = suffix;
+    ted->zipFileName = f;
+
+    ted->document()->setBaseUrl(ted->getFilesDir());
+
+    if (suffix == "html" || suffix == "maff")
+    {
+        qDebug() << "TextEdit::load:    html=" << str << ted->document()->baseUrl();
+
+        QTextDocument doc;
+        doc.setHtml(str);
+        ted->setResourceDir(ted->getFilesDir(), &doc);
+        ted->document()->setHtml(doc.toHtml());
+        ted->document()->setModified(false);
+
     }
     else if (suffix == "md")
     {
@@ -1041,7 +1091,7 @@ bool TextEdit::load(const QString &f, int mode)
     ted->setFocus();
     ted->moveCursor(QTextCursor::Start);  // = cursorPositionChanged();  fontChanged();
 
-    statusBarMessage(tr("temp file: %1").arg(ted->getFileName()));
+    statusBarMessage(tr("Temp file: %1").arg(ted->getFileName()));
     addRecentFile(ted->zipFileName);
     saveDir = QFileInfo(ted->zipFileName).path();
 
@@ -1122,7 +1172,7 @@ void TextEdit::fileOpen()
     QFileDialog dlg(this, tr("Open file"));
     if (!isUseNativeFileDlg)
         dlg.setOption(QFileDialog::DontUseNativeDialog);
-    //dlg.setFilter(QDir::Hidden | QDir::NoDotAndDotDot);
+
     dlg.setNameFilters(QStringList()
         << "All files (*)"
         << mimeTypes["maff"]
@@ -1133,14 +1183,14 @@ void TextEdit::fileOpen()
     dlg.setFileMode(QFileDialog::ExistingFile);
     dlg.setViewMode(QFileDialog::Detail);
     dlg.resize(fileDialogSize);
-    dlg.selectNameFilter(dlgCurrFilter[0]);
+    dlg.selectNameFilter(dlgCurrFilter[Open]);
 
     if (dlg.exec() != QDialog::Accepted)
         return;
 
     QString fn = dlg.selectedFiles().first();
     fileDialogSize = dlg.size();
-    dlgCurrFilter[0] = dlg.selectedNameFilter();
+    dlgCurrFilter[Open] = dlg.selectedNameFilter();
 
     load(fn);
 }
@@ -1169,7 +1219,7 @@ bool TextEdit::fileSave(QString name, QString suff)
     if (fileName.isEmpty())
         return fileSaveAs();
     if (suffix.isEmpty())
-        suffix = "html";
+        suffix = "maff";
 
     QString filesDir  = QFileInfo(fileName).path() + "/" + QFileInfo(fileName).baseName() + "_files";
     bool ok = false;
@@ -1209,7 +1259,7 @@ bool TextEdit::fileSave(QString name, QString suff)
         ted->document()->setModified(false);
 
         if (suffix == "md" && ted->mime != "md")
-            load(fileName, 1);
+            load(fileName, CurrentTab);
         else
         {
             ted->zipFileName = fileName;
@@ -1222,7 +1272,7 @@ bool TextEdit::fileSave(QString name, QString suff)
         int i = wtTabs->currentIndex();
         wtTabs->setTabText(i, cutStr(QFileInfo(ted->zipFileName).fileName(), tabTitleLen));
         wtTabs->setTabToolTip(i, ted->zipFileName);
-        statusBarMessage(tr("saved: \"%1\"").arg(QDir::toNativeSeparators(fileName)));
+        statusBarMessage(tr("Saved: \"%1\"").arg(QDir::toNativeSeparators(fileName)));
     }
     else
     {
@@ -1243,7 +1293,7 @@ bool TextEdit::fileSaveAs()
     dlg.setAcceptMode(QFileDialog::AcceptSave);
     if (!isUseNativeFileDlg)
         dlg.setOption(QFileDialog::DontUseNativeDialog);
-    //dlg.setFilter(QDir::NoDotAndDotDot);  //--  // QDir::Hidden - List hidden files (starting with a ".").
+
     if (ted->zipFileName.isEmpty())
     {
         if (!fileBrowserDir.isEmpty())
@@ -1258,7 +1308,7 @@ bool TextEdit::fileSaveAs()
         filters << mimeTypes["maff"] << mimeTypes["html"]  << mimeTypes["md"];
     dlg.setNameFilters(filters);
     dlg.setViewMode(QFileDialog::Detail);
-    dlg.selectNameFilter(dlgCurrFilter[1]);
+    dlg.selectNameFilter(dlgCurrFilter[Save]);
     dlg.selectFile(QFileInfo(ted->zipFileName).baseName() + "." + mimeTypes.key(dlgCurrFilter[1]));
     dlg.resize(fileDialogSize);
 
@@ -1268,8 +1318,8 @@ bool TextEdit::fileSaveAs()
     QString fn = dlg.selectedFiles().first();
     saveDir = dlg.directory().path();
     fileDialogSize = dlg.size();
-    dlgCurrFilter[1] = dlg.selectedNameFilter();
-    QString suffix = mimeTypes.key(dlgCurrFilter[1]);
+    dlgCurrFilter[Save] = dlg.selectedNameFilter();
+    QString suffix = mimeTypes.key(dlgCurrFilter[Save]);
 
     return fileSave(fn, suffix);
 }
@@ -1296,7 +1346,7 @@ bool TextEdit::fileExportTo()
     dlg.selectFile(QFileInfo(ted->zipFileName).baseName());
     dlg.setViewMode(QFileDialog::Detail);
     dlg.resize(fileDialogSize);
-    dlg.selectNameFilter(dlgCurrFilter[2]);
+    dlg.selectNameFilter(dlgCurrFilter[Export]);
 
     if (dlg.exec() != QDialog::Accepted)
         return false;
@@ -1304,7 +1354,7 @@ bool TextEdit::fileExportTo()
     QString suffix = mimeTypes.key(dlg.selectedNameFilter());
     QString fn = dlg.selectedFiles().first();
     fileDialogSize = dlg.size();
-    dlgCurrFilter[2] = dlg.selectedNameFilter();
+    dlgCurrFilter[Export] = dlg.selectedNameFilter();
 
     if (QFileInfo(fn).suffix().isEmpty())
         fn.append("." + suffix);
@@ -1501,6 +1551,7 @@ void TextEdit::textStyle(int styleIndex)
             style = cursor.currentList()->format().style();
         else
             style = QTextListFormat::ListDisc;
+
         marker = QTextBlockFormat::MarkerType::Unchecked;
         break;
     case 5:
@@ -1508,6 +1559,7 @@ void TextEdit::textStyle(int styleIndex)
             style = cursor.currentList()->format().style();
         else
             style = QTextListFormat::ListDisc;
+
         marker = QTextBlockFormat::MarkerType::Checked;
         break;
     case 6:
@@ -1705,10 +1757,15 @@ void TextEdit::cursorPositionChanged()
 
 void TextEdit::clipboardDataChanged()
 {
-#ifndef QT_NO_CLIPBOARD
-    if (const QMimeData *md = QApplication::clipboard()->mimeData())
-        actionPaste->setEnabled(md->hasText());
-#endif
+    qDebug() << "TextEdit::clipboardDataChanged";
+
+    QClipboard *clip = QApplication::clipboard();
+    const QMimeData *mimeData = clip->mimeData();
+
+    if (mimeData)
+    {
+        actionPaste->setEnabled(mimeData->hasText());
+    }
 }
 
 
@@ -1842,7 +1899,7 @@ void TextEdit::changeTextSize(int value)
             }
             else
             {
-                w = (ted->width() - 30)/2;
+                w = (ted->width() - CTextEdit::LineWrapMargin)/2;
                 h = 0;
             }
         }
@@ -1959,6 +2016,7 @@ void TextEdit::onCut()
 void TextEdit::onUndo()
 {
     CTextEdit* ted = currText();
+    qDebug() << "TextEdit::onUndo:  " << ted->document()->isUndoAvailable();
 
     ted->undo();
 
@@ -1974,7 +2032,7 @@ void TextEdit::onUndo()
 void TextEdit::onRedo()
 {
     CTextEdit* ted = currText();
-    qDebug() << "onRedo:  " << ted->document()->isRedoAvailable();
+    qDebug() << "TextEdit::onRedo:  " << ted->document()->isRedoAvailable();
 
     ted->redo();
 
@@ -2033,14 +2091,14 @@ void TextEdit::fileAttach()
     dlg.setViewMode(QFileDialog::Detail);
     dlg.setAcceptMode(QFileDialog::AcceptOpen);
     dlg.resize(fileDialogSize);
-    dlg.selectNameFilter(dlgCurrFilter[3]);
+    dlg.selectNameFilter(dlgCurrFilter[Attach]);
 
     if (dlg.exec() != QDialog::Accepted)
         return;
 
     QString filePath = dlg.selectedFiles().first();
     fileDialogSize = dlg.size();
-    dlgCurrFilter[3] = dlg.selectedNameFilter();
+    dlgCurrFilter[Attach] = dlg.selectedNameFilter();
 
     ted->insertFile(filePath);
 }
@@ -2048,14 +2106,21 @@ void TextEdit::fileAttach()
 
 int TextEdit::createFilesDir(QString path)
 {
+    int rc = 2;
+
     QDir dir(path);
+
     if (!dir.exists())
+    {
         if (!dir.mkpath("."))
-            {
-                QMessageBox::critical(this, appName, "Create directory error.\n" + tempDir, QMessageBox::Ok);
-                return 0;
-            }
-    return 1;
+        {
+            QMessageBox::critical(this, appName, "Create directory error.\n" + path, QMessageBox::Ok);
+            return 0;
+        }
+        rc = 1;
+    }
+
+    return rc;
 }
 
 
@@ -2135,15 +2200,19 @@ int TextEdit::saveToHtml(QString newFileName, QString format)
 {
     CTextEdit* ted = currText();
 
-    QString filesDir  = QFileInfo(newFileName).path() + "/" + QFileInfo(newFileName).baseName() + "_files";
+    QString newFilesDir  = QFileInfo(newFileName).path() + "/" + QFileInfo(newFileName).baseName() + "_files";
 
-    if (!createFilesDir(filesDir))  return false;
+    if (!createFilesDir(newFilesDir))  return false;
 
-    QList<QString> fileList = ted->getResourceFileList();
-    QString err;
+    QTextDocument doc;
+
+    doc.setHtml(ted->document()->toHtml());
+
+    QList<QString> fileList = ted->getResourceFileList(&doc);
 
     QString path = ted->getFilesDir() + "/";
     QDirIterator it(path, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    QString err;
 
     while (it.hasNext())
     {
@@ -2153,7 +2222,7 @@ int TextEdit::saveToHtml(QString newFileName, QString format)
         if (it.fileInfo().isFile())
         {
             QFile file(filePath);
-            QString destFileName = filesDir + "/" + fileName;
+            QString destFileName = newFilesDir + "/" + fileName;
 
             if (fileList.contains(fileName))
             {
@@ -2190,24 +2259,25 @@ int TextEdit::saveToHtml(QString newFileName, QString format)
         return 0;
     }
 
-    if (filesDir != ted->getFilesDir())
-        ted->setResourceDir(QFileInfo(filesDir).fileName());
+    // and write main file
+
+    ted->setResourceDir(QFileInfo(newFilesDir).fileName(), &doc);
 
     QTextDocumentWriter writer(newFileName);
     bool ok = false;
     if (format == "md")
     {
         writer.setFormat("markdown");
-        ok = writer.write(ted->document());
+        ok = writer.write(&doc);
     }
     else
     {
         if (isShrinkHtml)
-            ok = writeShrinkHtml(newFileName, ted->document()->toHtml("utf-8"));
+            ok = writeShrinkHtml(newFileName, doc.toHtml("utf-8"));
         else
         {
             writer.setFormat("HTML");
-            ok = writer.write(ted->document());
+            ok = writer.write(&doc);
         }
     }
 
@@ -2217,8 +2287,6 @@ int TextEdit::saveToHtml(QString newFileName, QString format)
         return 0;
     }
 
-    // working file staying temp
-    // html file only in editor?
     return 1;
 }
 
@@ -2255,19 +2323,24 @@ int TextEdit::saveToMaff(QString newFileName)
     if (zip.status() != QZipWriter::NoError)
         return 0;
 
-    ted->setResourceDir("index_files");
+    // copy doc for not add steps to undo stack
+    QTextDocument doc;
+
+    doc.setHtml(ted->document()->toHtml());
+
+    ted->setResourceDir("index_files", &doc);
 
     //save editor text to temp dir
     if (isShrinkHtml)
-        writeShrinkHtml(tempFileName, ted->document()->toHtml("utf-8"));
+        writeShrinkHtml(tempFileName, doc.toHtml("utf-8"));
     else
     {
         QTextDocumentWriter writer(tempFileName);
         writer.setFormat("html");
-        writer.write(ted->document());
+        writer.write(&doc);
     }
 
-    QList<QString> fileList = ted->getResourceFileList();
+    QList<QString> fileList = ted->getResourceFileList(&doc);
 
     zip.setCompressionPolicy(QZipWriter::AutoCompress);
 
@@ -2337,8 +2410,7 @@ int TextEdit::saveToEpub(QString newFileName)
     CTextEdit* ted = currText();
 
     QString tempFileDir = QFileInfo(ted->getFileName()).path();
-    //QString tempFileName = tempFileDir + "/index.html";  //it is more reliable
-    QString tempFileName = ted->getFileName();  //it is more reliable
+    QString tempFileName = ted->getFileName(); 
 
     QString zipFileName = newFileName;
     if (zipFileName.isEmpty())
@@ -2486,7 +2558,6 @@ int TextEdit::saveToEpub(QString newFileName)
         "<head>\n"
         "<meta http-equiv=\"Content-Type\" content=\"application/xhtml+xml; charset=utf-8\"/>\n";
     if (lineWrapWidth)
-        //"<meta name=\"viewport\" content=\"width=1000, height=1000\"></meta>\n"
         xhtml.append("<meta name=\"viewport\" content=\"width=" + QString::number(lineWrapWidth + 30) + "\"></meta>\n");
 
     xhtml.append(s.mid(s.indexOf("<style")));
@@ -2532,7 +2603,7 @@ int TextEdit::unpackMaff(QString zipName)
         {
             if (!dir.mkpath(fi.filePath))
                  return 0;
-            //if (!QFile::setPermissions(absPath, fi.permissions))
+                 
             if (!QFile::setPermissions(absPath, QFile::ReadOwner|QFile::WriteOwner|QFile::ExeOwner |
                                            QFile::ReadGroup|QFile::WriteGroup|QFile::ExeGroup |
                                            QFile::ReadOther|QFile::ExeOther))  //++
@@ -2561,8 +2632,9 @@ int TextEdit::unpackMaff(QString zipName)
     unzip.close();
 
     ted->setFileName(dataDir + "/index.html");
-    ted->setFilesDir(dataDir + "index_files");
+    ted->setFilesDir(dataDir + "/index_files");
     ted->tempPath = dataDir;
+    qDebug() << "TextEdit::unpackMaff:   tempDir   dataDir  ted->getFilesDir  " << tempDir << dataDir << ted->getFilesDir();
 
     return 1;
 }
@@ -2585,7 +2657,7 @@ int TextEdit::copyFile(QString fromName, QString toName)
 
     if (!err.isEmpty())
     {
-        QMessageBox::warning(this, appName, err, QMessageBox::Ok);
+        QMessageBox::critical(this, appName, err, QMessageBox::Ok);
         return 0;
     }
 
@@ -2593,7 +2665,31 @@ int TextEdit::copyFile(QString fromName, QString toName)
 }
 
 
-int TextEdit::openTempDir(QString origFileName)
+int TextEdit::copyDir(QString fromName, QString toName)
+{
+    if (!createFilesDir(toName))  return 0;
+
+    QString path = fromName + "/";
+    QDirIterator it(path, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+
+    while (it.hasNext())
+    {
+        QString filePath = it.next();
+        QString toFileName = toName + "/" + QFileInfo(filePath).fileName();
+
+        if (it.fileInfo().isFile())
+            if (!copyFile(filePath, toFileName))
+            {
+                QMessageBox::critical(this, appName, "Copy file error.\n" + filePath + "\nto" + toFileName, QMessageBox::Ok);
+                return 0;
+            }
+    }
+
+    return 1;
+}
+
+
+int TextEdit::copyToTempDir(QString origFileName)
 {
     CTextEdit* ted = currText();
 
@@ -2601,11 +2697,11 @@ int TextEdit::openTempDir(QString origFileName)
 
     if (!createFilesDir(tempDirName))  return 0;
 
-    //QString tempFilesDir  = tempDirName + "/" + QFileInfo(origFileName).baseName() + "_files";
-    QString tempFileName  = tempDirName + "/index.html";
-    QString tempFilesDir  = tempDirName + "/index_files";
+    // full paths
+    QString tempFileName  = tempDirName + "/" + QFileInfo(origFileName).fileName();
+    QString tempFilesDir  = tempDirName + "/" + QFileInfo(origFileName).baseName() + "_files";
 
-    if (!createFilesDir(tempFilesDir))  return false;
+    if (!createFilesDir(tempFilesDir))  return 0;
 
     QString filesDir  = QFileInfo(origFileName).path() + "/" + QFileInfo(origFileName).baseName() + "_files";
 
@@ -2638,7 +2734,6 @@ void TextEdit::onHttpFinished(QNetworkReply *resp)
     static int httpOkCount = 0;
     if (!maxHttpReqCount) maxHttpReqCount = httpReqCount;
     CTextEdit* ted = currText();
-    //CTextEdit* ted = resp->property("ted").value<CTextEdit*>();
 
     if(resp->error() != QNetworkReply::NoError)
     {
@@ -2692,7 +2787,9 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
 {
     QString filePath = fmt.name().remove("file://");
     fmt.setName("");
-    QString flags = fmt.property(1).toString();
+
+    int flags = fmt.property(CTextEdit::FlagsProp).toInt();
+    qDebug() << "TextEdit::onAddResFile:    " << filePath << Qt::hex << flags;
 
     if (!wtTabs->count())  return;
 
@@ -2705,7 +2802,7 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
     QString err;
 
     // if from clipboard
-    if (flags.indexOf("C") >= 0)
+    if (flags & CTextEdit::Clip)
     {
         fmt.setHeight(0);  // for thumbnails height is better
 
@@ -2716,11 +2813,11 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
         if (mimeData->hasImage())
         {
             QPixmap pix = qvariant_cast<QPixmap>(mimeData->imageData());
-            qDebug() << "onAddResFile:  pix:  " << pix.isNull() << pix.isQBitmap() << pix.isDetached(); // false false true
+            qDebug() << "TextEdit::onAddResFile:  pix:  " << pix.isNull() << pix.isQBitmap() << pix.isDetached(); // false false true
             QPixmap pix2 = pix.scaled(thumbHeight * 3, thumbHeight, Qt::KeepAspectRatio,Qt::SmoothTransformation);
 
             // if thumbnail
-            if (flags.indexOf("T") >= 0 && !fmt.anchorHref().isEmpty())
+            if (flags & CTextEdit::Thumb && !fmt.anchorHref().isEmpty())
             {
                 QString mime = QMimeDatabase().mimeTypeForFile(fmt.anchorHref()).name();
                 if (mime.indexOf("video") >= 0 || QFileInfo(fmt.anchorHref()).suffix() == "ts" || mime.indexOf("audio") >= 0)
@@ -2733,7 +2830,7 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
             }
 
             fileName = filesDir + "/" + QString("image_%1.png").arg(time(NULL));
-            //fmt.setWidth(pix2.width());
+
             fmt.setHeight(pix2.height());
 
             if (!pix2.save(fileName, 0, -1))
@@ -2743,15 +2840,17 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
             else
             {
                 fmt.setName(QFileInfo(filesDir).fileName() + "/" + QFileInfo(fileName).fileName());
-                statusBarMessage(tr("saved: %1").arg(fileName));
+                statusBarMessage(tr("Saved: %1").arg(fileName));
             }
         }
+        else
+            QMessageBox::warning(this, appName, "No image in the clipboard.\n", QMessageBox::Ok);
 
         return;
     }
 
     // from HTTP
-    if (flags.indexOf("H") >= 0)
+    if (flags & CTextEdit::Inet)
     {
         QString key = QFileInfo(ted->tempPath).fileName() + "=" + filePath;
 
@@ -2764,7 +2863,6 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
                 nm = new QNetworkAccessManager;
                 // https://doc.qt.io/qt-5/qnetworkrequest.html#RedirectPolicy-enum
                 nm->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);  //++
-                //connect(nm, &QNetworkAccessManager::finished, this, &TextEdit::onHttpFinished);
             }
 
             QNetworkRequest req;
@@ -2795,7 +2893,7 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
             }
             else
             {
-                qDebug() << "    loaded=" << resp->url();
+                qDebug() << "TextEdit::onAddResFile:    loaded=" << resp->url();
                 QString fileName = filesDir + "/" + QFileInfo(resp->url().toString()).fileName();
                 QByteArray respData = resp->readAll();
                 QFile file(fileName);
@@ -2814,20 +2912,19 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
         return;
     }
 
-    //if (flags.indexOf("F") >= 0)
     QString fileName = QFileInfo(filePath).fileName();
 
     QFile file(filePath);
     QString tempFileName;
 
     if (!file.exists())
-        err = "File not exists [1]";
+        err = "File not exists. [1]";
     else
     {
         if (file.size() > 512 * 1024 * 1024)
             err = "File is too large. File cannot be added. [> 512 Mb]";
         else if(!file.open(QIODevice::ReadOnly))
-            err = "File open error";
+            err = "File open error. [1]";
         else
         {
             tempFileName = filesDir + "/" + fileName;
@@ -2843,36 +2940,53 @@ void TextEdit::onAddResFile(QTextImageFormat &fmt)
             }
 
             if (n >= 100)
-                err = "File copy error. Too many files with the same name.";
+                err = "File copy error. Too many files with the same name. [1]";
             else
             {
                 CWaitCursor cur;
                 if(!file.copy(tempFileName))
-                    err = "File copy error";
+                    err = "File copy error. [1]";
             }
         }
     }
 
     if (!err.isEmpty())
     {
-        QMessageBox::warning(this, appName, err + "\n" + filePath, QMessageBox::Ok);
+        /*if (flags & CTextEdit::Image)
+            statusBarMessage(err + " " + cutStr(filePath, 30));  // message disappears when Ctrl-C released
+        else */
+            QMessageBox::warning(this, appName, err + "\n" + filePath, QMessageBox::Ok);
         return;
     }
 
     if (!tempFileName.isEmpty())
     {
-        statusBarMessage(tr("file added: %1").arg(tempFileName));
+        statusBarMessage(tr("File added: %1").arg(tempFileName));
         tempFileName =  QFileInfo(filesDir).fileName() + "/" + QFileInfo(tempFileName).fileName();
         fmt.setName(tempFileName);
     }
+
+    // for system ready
+    delay(100);
 
     return;
 }
 
 
-void TextEdit::onTedError(QString text)
+void TextEdit::onTedMessage(QTextFormat &msg)
 {
-    QMessageBox::warning(this, appName, text, QMessageBox::Ok);
+    int type = msg.property(CTextEdit::TypeProp).toInt();
+    QString text = msg.property(CTextEdit::TextProp).toString();
+    qDebug() << "TextEdit::onTedMessage:    " << type << text;
+
+    if (type == CTextEdit::Information)
+        QMessageBox::information(this, appName, text, QMessageBox::Ok);
+    else if (type == CTextEdit::Warning)
+        QMessageBox::warning(this, appName, text, QMessageBox::Ok);
+    else if (type == CTextEdit::Critical)
+        QMessageBox::critical(this, appName, text, QMessageBox::Ok);
+    else if (type == CTextEdit::StatusBar)
+        statusBarMessage(text);
 }
 
 
@@ -2899,7 +3013,7 @@ void TextEdit::onSaveResAsFile(QString name)
     dlg.setAcceptMode(QFileDialog::AcceptSave);
     dlg.setViewMode(QFileDialog::Detail);
     dlg.resize(fileDialogSize);
-    dlg.selectNameFilter(dlgCurrFilter[4]);
+    dlg.selectNameFilter(dlgCurrFilter[SaveRes]);
     dlg.selectFile(resFileName);
 
     if (dlg.exec() != QDialog::Accepted)
@@ -2907,7 +3021,7 @@ void TextEdit::onSaveResAsFile(QString name)
 
     QString fn = dlg.selectedFiles().first();
     fileDialogSize = dlg.size();
-    dlgCurrFilter[4] = dlg.selectedNameFilter();
+    dlgCurrFilter[SaveRes] = dlg.selectedNameFilter();
 
     if (!resFile.copy(fn))
     {
@@ -2927,13 +3041,12 @@ void TextEdit::onTableMenuAct(bool checked)
     CTextEdit* ted = currText();
     QTextCursor cur = ted->textCursor();
 
-    if (act == "CT")
+    if (act == "CreateTable")
     {
         QTextTableFormat tf;
         tf.setCellPadding(4);
         tf.setBorderCollapse(true);
-        //tf.setMargin(5);
-        //tf.setWidth(100);  // not changes when add column
+
         if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
         {
             QVector<QTextLength> constraints;
@@ -2950,48 +3063,47 @@ void TextEdit::onTableMenuAct(bool checked)
     QTextTable* tab = ted->textCursor().currentTable();
     if (!tab)  return;
 
-    if (act == "AR")
+    if (act == "AddRow")
     {
         tab->appendRows(1);
     }
-    else if (act == "AC")
+    else if (act == "AddColumn")
     {
         tab->appendColumns(1);
         adjustTableFormat(tab);
     }
-    else if (act == "IR")
+    else if (act == "InsertRow")
     {
         tab->insertRows(tab->cellAt(cur).row(), 1);
     }
-    else if (act == "IC")
+    else if (act == "InsertColumn")
     {
         tab->insertColumns(tab->cellAt(cur).column(), 1);
         adjustTableFormat(tab);
     }
-    else if (act == "DR")
+    else if (act == "DeleteRow")
     {
         if (tab->rows() < 2)  return;
         int row = tab->cellAt(cur).row();
         if (tab->rows() == 2 && tab->columns() < 2 && row == 0)  return;  // otherwise crash
         tab->removeRows(row, 1);
     }
-    else if (act == "DC")
+    else if (act == "DeleteColumn")
     {
         if (tab->columns() < 2)  return;
         tab->removeColumns(tab->cellAt(cur).column(), 1);
         adjustTableFormat(tab);
     }
-    else if (act == "MC")
+    else if (act == "MergeCells")
     {
         tab->mergeCells(cur);
-        //tab->mergeCells(tab->cellAt(cur).row(), tab->cellAt(cur).column(), 1, 2);
     }
-    else if (act == "SC")
+    else if (act == "SplitCell")
     {
         tab->splitCell(tab->cellAt(cur).row(), tab->cellAt(cur).column(), 1, 1);  //--
     }
 
-    if (QString("AR|AC|IR|IC|DR|DC").indexOf(act) >= 0)
+    if (QString("AddRow|AddColumn|InsertRow|InsertColumn|DeleteRow|DeleteColumn").indexOf(act) >= 0)
         btTable->setDefaultAction(a);
     else
         btTable->setDefaultAction(actTableNoAct);
@@ -3200,33 +3312,14 @@ void TextEdit::onOptions()
     QSettings set(iniFileName, QSettings::IniFormat);
     set.beginGroup( "public" );
 
-    for (int i = 0; i < params.size(); i++)
-    {
-        QVariant value = set.value(params[i].name, params[i].defValue);
-        if (params[i].type == CConfigList::TypeNumber)
-            params[i].value = value.toInt();
-        else if (params[i].type == CConfigList::TypeFloat)
-            params[i].value = value.toFloat();
-        else if (params[i].type == CConfigList::TypeBool)
-            params[i].value = value.toBool();
-        else
-            params[i].value = value.toString();
-    }
+    CConfigList::loadSettings(params, set);
 
     winConf->setParams(params);
     winConf->setUseNativeFileDlg(isUseNativeFileDlg);
 
     if (winConf->exec())
     {
-        for (int i = 0; i < winConf->params().count(); i++)
-        {
-            QVariant value = winConf->params()[i].value;
-
-            if (value.isNull())
-                set.setValue(winConf->params()[i].name, winConf->params()[i].defValue);
-            else if (winConf->params()[i].isEdited)
-                set.setValue(winConf->params()[i].name, value);
-        }
+        CConfigList::unloadSettings(winConf->params(), set);
 
         setPublicParams(set);
     }
@@ -3237,10 +3330,7 @@ void TextEdit::onOptions()
 
 void TextEdit::statusBarMessage(const QString& text)
 {
-    //if (statBar)
-    {
-        statusBar()->showMessage(text);
-    }
+    statusBar()->showMessage(text);
 }
 
 
@@ -3274,4 +3364,86 @@ void TextEdit::onFileMoved(QString file, QString path)
             break;
         }
     }
+}
+
+
+QString currTimeStr()
+{
+    char sz[32];
+    time_t tt;
+    struct tm lt;
+    time (&tt);
+    localtime_r(&tt, &lt);
+    strftime(sz, sizeof(sz), "%Y%m%d-%H%M%S", &lt);
+    return QString(sz);
+}
+
+
+void TextEdit::onMakeBackup()
+{
+    CTextEdit* ted = currText();
+
+    if (ted->document()->isModified())
+    {
+        const QMessageBox::StandardButton ret =
+                QMessageBox::warning(this, appName,
+                                     tr("The document has been modified.\n"
+                                        "Do you want to save your changes before backup?"),
+                                     QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        if (ret == QMessageBox::Save)
+            fileSave("");
+        else if (ret == QMessageBox::Cancel)
+            return;
+    }
+
+    if (backupDir.isEmpty())
+    {
+        QMessageBox::warning(this, appName, "Backup directory path is empty. See Options.", QMessageBox::Ok);
+        return;
+    }
+
+    if (!QDir(backupDir).exists())
+    {
+        QMessageBox::warning(this, appName, "Backup directory not exists.\n" + backupDir, QMessageBox::Ok);
+        return;
+    }
+
+    QString actionTime = currTimeStr();  // QString::number(time(0));
+
+    QString backupFileName = QFileInfo(ted->zipFileName).baseName() + "=" + actionTime + "." + QFileInfo(ted->zipFileName).suffix();
+    QString backupFilePath = backupDir + "/" + backupFileName;
+
+    QFile file(ted->zipFileName);
+    QString err;
+
+    if (ted->mime == "maff")
+    {
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            err = "File open error.\n" + ted->zipFileName;
+        }
+        else
+        {
+            if (!file.copy(backupFilePath))
+            {
+                err = "File copy error.\n" + ted->zipFileName + "\nto " + backupFilePath;
+            }
+        }
+    }
+    else if (ted->mime == "html" || ted->mime == "md")
+    {
+        QString filesDir  = QFileInfo(ted->zipFileName).path() + "/" + QFileInfo(ted->zipFileName).baseName() + "_files";
+        QString backupFilesDir  = backupDir + "/" + QFileInfo(backupFileName).baseName() + "_files";
+
+        if (!copyDir(filesDir, backupFilesDir))  return;
+
+        qDebug() << "TextEdit::onMakeBackup:    " << ted->zipFileName << backupFileName;
+
+        if (!copyFile(ted->zipFileName, backupFilePath))  return;
+    }
+
+    if (!err.isEmpty())
+        QMessageBox::critical(this, appName, err, QMessageBox::Ok);
+    else
+        QMessageBox::information(this, appName, "Backup file is made.\n" + backupFilePath, QMessageBox::Ok);
 }

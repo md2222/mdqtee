@@ -21,10 +21,11 @@ public:
     explicit CConfigDialog(QWidget *parent = 0);
     ~CConfigDialog();
     void setUseNativeFileDlg(bool native);
-    void setParams(QVector<PARAM_STRUCT> &p);
-    QVector<PARAM_STRUCT>& params();
+    void setParams(CConfigList::ParamList &p);
+    CConfigList* list();
     QByteArray headerState();
     void setHeaderState(QByteArray state);
+    const CConfigList::ParamList& params();
 
 public slots:
     void onConfDoubleClick(const QModelIndex& index);

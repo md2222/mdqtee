@@ -47,7 +47,7 @@ QStringList CColorToolButton::getCustomColorNames()
 
 void CColorToolButton::setCurrentColor(QColor color)
 {
-    QPixmap pix(18, 18);
+    QPixmap pix(PixmapWidth, PixmapHeight);
     pix.fill(color);
     setIcon(QIcon(pix));
     currentColor = color;
@@ -56,7 +56,7 @@ void CColorToolButton::setCurrentColor(QColor color)
 
 void CColorToolButton::updateColorMenu()
 {
-    QPixmap pix(18, 18);
+    QPixmap pix(PixmapWidth, PixmapHeight);
     QAction* a;
 
     colorMenu->clear();
@@ -73,7 +73,7 @@ void CColorToolButton::updateColorMenu()
     colorMenu->addSeparator();
 
     a = new QAction("Custom color", this);
-    a->setData(QColor("#000001"));
+    a->setData(QColor(CustomColorCode));
     connect(a, &QAction::triggered, this, &CColorToolButton::onColorMenuAct);
     colorMenu->addAction(a);
 
@@ -85,7 +85,7 @@ void CColorToolButton::onColorMenuAct()
     QAction* a = qobject_cast<QAction*>(sender());
     QColor col =  qvariant_cast<QColor>(a->data());
 
-    if (col.name() == "#000001")
+    if (col.name() == CustomColorCode)
     {
         col = getCustomColor();
         if (!col.isValid())  return;
@@ -99,7 +99,6 @@ void CColorToolButton::onColorMenuAct()
 
 QColor CColorToolButton::getCustomColor()
 {
-    //QColor col = QColorDialog::getColor(textEdit->textColor(), this);
     QColorDialog cd(this);
     cd.setOptions(QColorDialog::DontUseNativeDialog);
     cd.setCurrentColor(currentColor);

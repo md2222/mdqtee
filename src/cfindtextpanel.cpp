@@ -10,32 +10,28 @@ CFindTextPanel::CFindTextPanel(QWidget *parent) : QWidget(parent)
     hb->setContentsMargins(10, 0, 10, 8);
 
     edFind = new QLineEdit(this);
-    //edFind = new CFindEdit(this);
     edFind->setPlaceholderText("Find");
     edFind->setFixedWidth(250);
-    //edFind->setAlignment(Qt::AlignLeft);
 
-    //edFind->installEventFilter(this);
     connect(edFind, SIGNAL(returnPressed()), this, SLOT(onReturnPressed()));
 
     btPrev = new QToolButton(this);
-    btPrev->setFixedWidth(30);
-    btPrev->setIconSize(QSize(22, 22));
+    btPrev->setFixedWidth(ButtonWidth);
+    btPrev->setIconSize(IconSize);
 
     btNext = new QToolButton(this);
-    btNext->setFixedWidth(30);
-    btNext->setIconSize(QSize(22, 22));
+    btNext->setFixedWidth(ButtonWidth);
+    btNext->setIconSize(IconSize);
 
     btClose = new QToolButton(this);
-    btClose->setFixedWidth(30);
-    btClose->setIconSize(QSize(22, 22));
+    btClose->setFixedWidth(ButtonWidth);
+    btClose->setIconSize(IconSize);
 
     connect(btPrev, &QToolButton::clicked, this, &CFindTextPanel::findPrev);
     connect(btNext, &QToolButton::clicked, this, &CFindTextPanel::findNext);
     connect(btClose, &QToolButton::clicked, this, &CFindTextPanel::onClose);
 
     chWholeWords = new QCheckBox("Whole words    ", this);
-    //chWholeWords->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
     chWholeWords->setFixedWidth(120);
     chWholeWords->setChecked(false);
     connect(chWholeWords, SIGNAL(stateChanged(int)), this, SLOT(onWholeWords(int)));
@@ -43,7 +39,6 @@ CFindTextPanel::CFindTextPanel(QWidget *parent) : QWidget(parent)
     lbStatus = new QLabel(this);
     lbStatus->setFixedWidth(100);
     lbStatus->setAlignment(Qt::AlignCenter);
-    //lbStatus->setStyleSheet("QLabel { background-color: #446fbd; color: #f0f0f0; }");
     lbStatus->setStyleSheet("QLabel { background-color: #404244; color: #fafafa; }");  // #3c63a7  #308cc6
     lbStatus->setText("End of text");
     lbStatus->setVisible(false);
@@ -55,10 +50,6 @@ CFindTextPanel::CFindTextPanel(QWidget *parent) : QWidget(parent)
     hb->addWidget(lbStatus);
     hb->addStretch(1);
     hb->addWidget(btClose, Qt::AlignRight);
-
-    //setTabOrder(edFind, btPrev);
-    //setTabOrder(btPrev, btNext);
-    //setTabOrder(btNext, chWholeWords);
 
     setFocusPolicy(Qt::TabFocus);
     setFocusProxy(edFind);
@@ -73,7 +64,6 @@ CFindTextPanel::CFindTextPanel(QWidget *parent) : QWidget(parent)
 void CFindTextPanel::setFont(const QFont &font)
 {
     edFind->setFont(font);
-    //lbStatus->setFont(font);
 }
 
 
@@ -97,9 +87,6 @@ void CFindTextPanel::setCloseIcon(const QIcon &icon)
 
 void CFindTextPanel::setFlat(bool flat)
 {
-    //btPrev->setFlat(flat);
-    //btNext->setFlat(flat);  btNext->seta
-    //btClose->setFlat(flat);
     btPrev->setAutoRaise(flat);
     btNext->setAutoRaise(flat);
     btClose->setAutoRaise(flat);
@@ -128,22 +115,18 @@ void CFindTextPanel::findNext()
     {
         findFlags &= ~QTextDocument::FindBackward;
 
-        if (findStatus == 2)
+        if (findStatus == AtEnd)
         {
             teText->moveCursor(QTextCursor::Start);
-            //isEndOfText = false;
-            findStatus = 0;
+            findStatus = None;
         }
 
         if (!teText->find(edFind->text(), findFlags))
         {
-            //lbStatus->setText("End of text");
             lbStatus->setVisible(true);
-            //isEndOfText = true;
-            findStatus = 2;
+            findStatus = AtEnd;
         }
         else
-            //lbStatus->setText("");
             lbStatus->setVisible(false);
     }
 }
@@ -155,22 +138,18 @@ void CFindTextPanel::findPrev()
     {
         findFlags |= QTextDocument::FindBackward;
 
-        if (findStatus == 1)
+        if (findStatus == AtBegin)
         {
             teText->moveCursor(QTextCursor::End);
-            //isEndOfText = false;
-            findStatus = 0;
+            findStatus = None;
         }
 
         if (!teText->find(edFind->text(), findFlags))
         {
-            //lbStatus->setText("End of text");
             lbStatus->setVisible(true);
-            //isEndOfText = true;
-            findStatus = 1;
+            findStatus = AtBegin;
         }
         else
-            //lbStatus->setText("");
             lbStatus->setVisible(false);
     }
 }
@@ -196,4 +175,3 @@ void CFindTextPanel::onClose()
     setVisible(false);
     teText->setFocus();
 }
-

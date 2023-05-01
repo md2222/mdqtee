@@ -1,9 +1,12 @@
 #include <QtDebug>
 #include "ctabwidget.h"
+#include <QDropEvent>
 
 
 CTabWidget::CTabWidget(QWidget* parent)
 {
+    Q_UNUSED(parent)
+
     bar = new CTabBar(this);
     bar->setBaseSize(600, 30);
     setTabBar(bar);
@@ -20,6 +23,8 @@ void CTabWidget::resizeEvent(QResizeEvent *ev)
 
 CTabBar::CTabBar(QWidget* parent)
 {
+    Q_UNUSED(parent)
+
     setWidth(size().width());
 }
 
@@ -35,8 +40,7 @@ bool CTabBar::event(QEvent *ev)
 {
     if (ev->type() == QEvent::Polish)
         qDebug() << "event:  Polish";
-        //cachedHeight = -1;
-        //isPolish = true;
+        
     return QTabBar::event(ev);
 }
 
@@ -56,4 +60,3 @@ QSize CTabBar::tabSizeHint(int index) const
 
     return QSize(w, tabSize.height());
 }
-

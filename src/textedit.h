@@ -87,12 +87,16 @@ class QMenu;
 class QPrinter;
 QT_END_NAMESPACE
 
+//const int DefaultFontSize = 11;
+
 
 class TextEdit : public QMainWindow
 {
     Q_OBJECT
 
 public:
+    enum LoadMode { NewTab, CurrentTab };
+
     QString appDir;
     QString tempDir;
     QFont textFont;
@@ -113,10 +117,11 @@ public:
     void closeTab(int index = -1);
     void onHelp();
     bool isHttpLink(QString link);
-    bool load(const QString &f, int mode = 0);
+    bool load(const QString &f, LoadMode mode = NewTab);
     bool close(QSettings& set);
     void setFileBrowserChecked(bool checked);
     void onFileMoved(QString file, QString path);
+    int copyDir(QString fromName, QString toName);
 
 public slots:
     void fileNew();
@@ -127,12 +132,23 @@ public slots:
     void onRedoAvailable(bool m);
 
 signals:
+    //void fileLoaded();
     void httpAllFinished();
     void sigFileBrowserShow(bool show);
 
 protected:
 
 private:
+    const QSize DefFileDialogSize = QSize(760, 600);
+    const QSize DefWinConfSize = QSize(700, 300);
+    const int DefThumbHeigh = 100;
+    const int MaxLineWrapWidth = 3840;
+    const int MinLineWrapWidth = 100;
+    const int DefTabTitleLen = 30;
+    const QSize MenuIconSize = QSize(22, 22);
+    const int DocumentMargin = 6;
+    const int TabStopWidth = 4;
+
     QWidget *win;
     QTabWidget* wtTabs;
     QToolBar *tb;
@@ -208,11 +224,14 @@ private:
     QNetworkAccessManager *nm;
     QRect pdfMargins;
     bool isShrinkHtml = false;
+    int imageQuality = -1;  // -1 - defaul quality
+    QString backupDir;
     void addTab(QString filePath);
     CTextEdit* currText() const;
-    QVector<PARAM_STRUCT> params;
+    //QVector<CConfigList::Param> params;
+    CConfigList::ParamList params;
     void setupParams();
-    void setupFileActions();
+    void setupMenuActions();
     void setupTextActions();
     void setEditActsEnabled(bool enabled);
     bool maybeSave(int index = -1);
@@ -229,7 +248,7 @@ private:
     QString shrinkHtml(QString html);
     bool writeShrinkHtml(QString path, QString html);
     int unpackMaff(QString zipName);
-    int openTempDir(QString name);
+    int copyToTempDir(QString name);
     int copyFile(QString fromName, QString toName);
     void setOtherTabEnabled(int index, bool enable);
     void adjustTableFormat(QTextTable* tab);
@@ -276,7 +295,8 @@ private slots:
     void onTabChanged(int index);
     void onTabClose();
     void onTabCloseRequest(int index);
-    void onTedError(QString text);
+    //void onTedError(QString text);
+    void onTedMessage(QTextFormat &msg);
     void onCursorOnLink(QString href);
     void onSaveResAsFile(QString name);
     void onTableMenuAct(bool checked);
@@ -293,6 +313,7 @@ private slots:
     void onTabContextMenu(const QPoint &);
     void onOptions();
     void onFileBrowser(bool checked);
+    void onMakeBackup();
 };
 
 
@@ -300,27 +321,28 @@ class CWaitCursor : public QObject
 {
     Q_OBJECT
 public:
+    enum CursorStatus { NotWait, Wait, Final};
     static int waitCursorStatus;
     CWaitCursor()
     {
-        if (waitCursorStatus == 0)
+        if (waitCursorStatus == NotWait)
         {
             QGuiApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
             qDebug() << "CWaitCursor:  setOverrideCursor";
         }
-        waitCursorStatus = 1;
+        waitCursorStatus = Wait;
     };
     ~CWaitCursor()
     {
-        if (waitCursorStatus == 1)
+        if (waitCursorStatus == Wait)
         {
-            waitCursorStatus = 2;
+            waitCursorStatus = Final;
             QCoreApplication::processEvents(QEventLoop::AllEvents, 1000);
-            if (waitCursorStatus == 2)
+            if (waitCursorStatus == Final)
             {
                 QGuiApplication::restoreOverrideCursor();
                 qDebug() << "CWaitCursor:  restoreOverrideCursor";
-                waitCursorStatus = 0;
+                waitCursorStatus = NotWait;
             }
         }
     };

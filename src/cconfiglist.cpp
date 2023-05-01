@@ -7,14 +7,15 @@
 #include <QMessageBox>
 #include "cconfiglist.h"
 
+enum { NameCol, ValueCol, CommentCol };
 
 CConfigList::CConfigList(QWidget *parent)
     : QTableWidget(parent)
 {
     setColumnCount(3);
-    setColumnWidth(0, 200);
-    setColumnWidth(1, 200);
-    setColumnWidth(2, 200);
+    setColumnWidth(NameCol, InitColumnWidth);
+    setColumnWidth(ValueCol, InitColumnWidth);
+    setColumnWidth(CommentCol, InitColumnWidth);
 
     setHorizontalHeaderLabels(QStringList() << "Name" << "Value" << "Comment");
 
@@ -22,7 +23,7 @@ CConfigList::CConfigList(QWidget *parent)
     setSelectionBehavior(QAbstractItemView::SelectRows);
     setSelectionMode(QAbstractItemView::SingleSelection);
 
-    horizontalHeader()->setMinimumSectionSize(50);
+    horizontalHeader()->setMinimumSectionSize(MinimumSectionSize);
     horizontalHeader()->setStretchLastSection(true);
 
     verticalHeader()->setDefaultSectionSize(verticalHeader()->defaultSectionSize() - 2);
@@ -40,14 +41,30 @@ QHeaderView* CConfigList::header()
 }
 
 
-void CConfigList::addParams(QVector<PARAM_STRUCT> &p)
+const CConfigList::ParamList& CConfigList::params()
 {
+    return pars;
+}
+
+
+void CConfigList::clear()
+{
+    pars.clear();
+    QTableWidget::clearContents();
+    setRowCount(0);
+}
+
+
+void CConfigList::setParams(ParamList &p)
+{
+    clear();
+
     for (int i = 0; i < p.size(); i++)
         addParam(p[i]);
 }
 
 
-void CConfigList::addParam(PARAM_STRUCT &param)
+void CConfigList::addParam(Param &param)
 {
     qDebug() << "addParam:  " << param.name << param.value;
     pars.append(param);
@@ -56,7 +73,7 @@ void CConfigList::addParam(PARAM_STRUCT &param)
     insertRow(i);
 
     QTableWidgetItem *item = new QTableWidgetItem(param.label);
-    setItem(i, 0, item);
+    setItem(i, NameCol, item);
 
     QWidget* widget = 0;
 
@@ -83,12 +100,13 @@ void CConfigList::addParam(PARAM_STRUCT &param)
     {
         item = new QTableWidgetItem("", TypeList);
 
-        if (pars[i].list.count() > 0)
+        if (param.list.count() > 0)
         {
             QComboBox* cb = new QComboBox(this);
             cb->setProperty("row", i);
             cb->setEditable(true);
-            foreach (QString str, pars[i].list)
+
+            foreach (QString str, param.list)
                 cb->addItem(str);
             cb->setEditText(param.value.toString());
             connect(cb, &QComboBox::currentTextChanged, this, &CConfigList::onComboBox);
@@ -119,12 +137,12 @@ void CConfigList::addParam(PARAM_STRUCT &param)
         item = new QTableWidgetItem(param.value.toString());
     }
 
-    setItem(i, 1, item);
+    setItem(i, ValueCol, item);
     if (widget)
-        setCellWidget(i, 1, widget);
+        setCellWidget(i, ValueCol, widget);
 
     item = new QTableWidgetItem(param.comment);
-    setItem(i, 2, item);
+    setItem(i, CommentCol, item);
 }
 
 
@@ -188,6 +206,9 @@ void CConfigList::editCurrentRow(int col)
             QString dirPath = dlg.selectedFiles().first();
             fileDialogSize = dlg.size();
 
+            if (dirPath.endsWith('/'))
+                dirPath.chop(1);
+
             pars[i].value = dirPath;
             pars[i].isEdited = true;
             item->setText(dirPath);
@@ -225,20 +246,6 @@ void CConfigList::onComboBox(QString text)
     qDebug() << "onComboBox:  " << i << cb->currentText();
     pars[i].value = cb->currentText();
     pars[i].isEdited = true;
-}
-
-
-void CConfigList::clear()
-{
-    pars.clear();
-    QTableWidget::clearContents();
-    setRowCount(0);
-}
-
-
-QVector<PARAM_STRUCT>& CConfigList::params()
-{
-    return pars;
 }
 
 
@@ -300,4 +307,46 @@ void CConfigList::onCloseEditor(QWidget *editor, QAbstractItemDelegate::EndEditH
 }
 
 
+void CConfigList::setUseNatFileDlg(bool native)
+{
+    isUseNatFileDlg = native;
+}
 
+
+void CConfigList::setFileDialogSize(QSize &size)
+{
+    fileDialogSize = size;
+}
+
+
+void CConfigList::loadSettings(ParamList &params, const QSettings &set)
+{
+    for (int i = 0; i < params.size(); i++)
+    {
+        QVariant value = set.value(params[i].name, params[i].defValue);
+        if (value.isNull())  continue;
+
+        if (params[i].type == CConfigList::TypeNumber)
+            params[i].value = value.toInt();
+        else if (params[i].type == CConfigList::TypeFloat)
+            params[i].value = value.toFloat();
+        else if (params[i].type == CConfigList::TypeBool)
+            params[i].value = value.toBool();
+        else
+            params[i].value = value.toString();
+    }
+}
+
+
+void CConfigList::unloadSettings(const ParamList &params, QSettings &set)
+{
+    for (int i = 0; i < params.count(); i++)
+    {
+        QVariant value = params[i].value;
+
+        if (value.isNull())
+            set.setValue(params[i].name, params[i].defValue);
+        else if (params[i].isEdited)
+            set.setValue(params[i].name, value);
+    }
+}

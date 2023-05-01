@@ -35,7 +35,8 @@ build_all:!build_pass {
     CONFIG += release
 }
 
-include(/home/user/Projects/qt/qt-solutions/qtsingleapplication/src/qtsingleapplication.pri)
+include(../../qt-solutions/qtsingleapplication/src/qtsingleapplication.pri)
+
 
 EXAMPLE_FILES = textedit.qdoc
 
@@ -45,7 +46,7 @@ INSTALLS += target
 
 QMAKE_CXXFLAGS += "-fno-sized-deallocation"
 
-CONFIG(release, debug|release):DEFINES += QT_NO_DEBUG_OUTPUT
+#CONFIG(release, debug|release):DEFINES += QT_NO_DEBUG_OUTPUT
 
 FORMS += \
     cconfigdialog.ui

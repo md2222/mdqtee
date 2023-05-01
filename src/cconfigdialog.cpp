@@ -16,7 +16,7 @@ CConfigDialog::CConfigDialog(QWidget *parent) :
     setLayout(ui->vl);
 
     conf = new CConfigList(this);
-    conf->fileDialogSize = fileDialogSize;
+    conf->setFileDialogSize(fileDialogSize);
 
     ui->buttonBox->setStandardButtons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);
     connect(ui->buttonBox, SIGNAL(accepted()), this, SLOT(accept()));
@@ -43,18 +43,23 @@ void CConfigDialog::onConfDoubleClick(const QModelIndex& index)
 
 void CConfigDialog::setUseNativeFileDlg(bool native)
 {
-     conf->isUseNatFileDlg = native;
+     conf->setUseNatFileDlg(native);
 }
 
 
-void CConfigDialog::setParams(QVector<PARAM_STRUCT> &p)
+void CConfigDialog::setParams(CConfigList::ParamList &p)
 {
-    conf->clear();
-    conf->addParams(p);
+    conf->setParams(p);
 }
 
 
-QVector<PARAM_STRUCT>& CConfigDialog::params()
+CConfigList* CConfigDialog::list()
+{
+    return conf;
+}
+
+
+const CConfigList::ParamList& CConfigDialog::params()
 {
     return conf->params();
 }
